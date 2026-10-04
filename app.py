@@ -1,85 +1,74 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from google import genai
+import os
+import requests
+import io
 
-st.set_page_config(page_title="Dashboard Operativo - Inasistencias", layout="wide")
+# Importación de módulos independientes
+import inasistencias
+import nps
 
-st.title("📊 Dashboard Analítico & Coaching Ejecutivo")
-st.caption("Consolidado dinámico de inasistencias y generación de planes de acción con IA.")
+st.set_page_config(page_title="La Tinka - Portal Canal Agente", layout="wide", initial_sidebar_state="expanded")
 
-st.sidebar.header("⚙️ Panel de Control")
-api_key = st.sidebar.text_input("Gemini API Key (AQ...)", type="password")
-uploaded_file = st.sidebar.file_uploader("Cargar Excel (.xlsx)", type=["xlsx"])
+# --- INYECCIÓN CSS: IDENTIDAD CORPORATIVA ---
+st.markdown("""
+<style>
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background-color: #F5F0D4 !important; color: #000000 !important; }
+    p, label, span, div { color: #000000 !important; }
+    h1, h2, h3, h4, h5, h6 { color: #096045 !important; font-weight: 800 !important; }
+    label[data-testid="stWidgetLabel"] p { color: #096045 !important; font-weight: bold !important; font-size: 1.05rem !important; }
+    div[data-baseweb="select"] > div { background-color: #FFFFFF !important; border: 2px solid #096045 !important; border-radius: 8px !important; color: #000000 !important; }
+    div[data-baseweb="select"] * { color: #000000 !important; background-color: #FFFFFF !important; }
+    [data-baseweb="popover"], [data-baseweb="menu"], ul[role="listbox"], li[role="option"] { background-color: #FFFFFF !important; color: #000000 !important; }
+    li[role="option"] * { color: #000000 !important; background-color: #FFFFFF !important; }
+    li[role="option"]:hover, li[role="option"][aria-selected="true"] { background-color: #F5F0D4 !important; }
+    li[role="option"]:hover *, li[role="option"][aria-selected="true"] * { color: #096045 !important; background-color: #F5F0D4 !important; font-weight: bold !important; }
+    [data-testid="stMetric"] { background-color: #FFFFFF !important; padding: 12px 16px !important; border-radius: 10px !important; border-left: 6px solid #096045 !important; box-shadow: 0px 2px 6px rgba(0,0,0,0.08); }
+    [data-testid="stMetricLabel"] p { color: #096045 !important; font-weight: bold !important; }
+    [data-testid="stMetricValue"] div { color: #000000 !important; font-weight: 800 !important; }
+    div[data-testid="stExpander"] { background-color: #FFFFFF !important; border: 2px solid #096045 !important; border-radius: 10px !important; }
+    div[data-testid="stExpander"] summary p { color: #096045 !important; font-weight: bold !important; font-size: 1.05rem !important; }
+    div.stButton > button, div.stDownloadButton > button, div.stButton > button *, div.stDownloadButton > button * { background-color: #096045 !important; color: #FFFFFF !important; border-radius: 8px !important; border: none !important; font-weight: 800 !important; font-size: 1rem !important; margin-bottom: 4px !important; }
+    div.stButton > button:hover, div.stDownloadButton > button:hover, div.stButton > button:hover *, div.stDownloadButton > button:hover * { background-color: #FF6700 !important; color: #FFFFFF !important; }
+    [data-testid="stDataFrame"] { background-color: #FFFFFF !important; border: 1px solid #096045 !important; border-radius: 8px !important; }
+</style>
+""", unsafe_allow_html=True)
 
-if uploaded_file and api_key:
-    client = genai.Client(api_key=api_key)
-    xls = pd.ExcelFile(uploaded_file)
-    data_df = pd.read_excel(xls, sheet_name=0)
-    dir_df = pd.read_excel(xls, sheet_name=1)
+# --- AUTENTICACIÓN Y CONFIGURACIÓN ---
+api_key = st.secrets.get("GEMINI_API_KEY", None)
+url_inas = st.secrets.get("URL_INASISTENCIAS", None)
+url_nps = st.secrets.get("URL_NPS", None)
 
-    territoriales = data_df['TERRITORIAL'].unique()
-    selected_terr = st.sidebar.selectbox("Seleccionar Líder Territorial", territoriales)
+st.sidebar.title("📌 Canal Agente")
+if os.path.exists("logo.png"):
+    st.sidebar.image("logo.png", width=180)
 
-    # Filtrado por territorio
-    df_terr = data_df[data_df['TERRITORIAL'] == selected_terr]
-    correo_match = dir_df[dir_df['TERRITORIAL'] == selected_terr]['CORREO'].values
-    correo_leader = correo_match[0] if len(correo_match) > 0 else "Sin correo registrado"
+modulo_seleccionado = st.sidebar.radio(
+    "Selecciona la herramienta:",
+    ["1. Copiloto IA (Inasistencias)", "2. Avance Mensual NPS"]
+)
 
-    # KPIs
-    c1, c2, c3 = st.columns(3)
-    total_casos = len(df_terr)
-    top_sup_counts = df_terr['Jerarquia_Dinamica'].value_counts()
-    top_sup_nombre = top_sup_counts.index[0] if not top_sup_counts.empty else "N/A"
-    top_sup_val = top_sup_counts.values[0] if not top_sup_counts.empty else 0
+st.sidebar.divider()
+st.sidebar.header("⚙️ Configuración")
+if not api_key:
+    api_key = st.sidebar.text_input("Gemini API Key (AQ...)", type="password")
 
-    c1.metric("Puntos Pendientes", total_casos)
-    c2.metric("Supervisor Crítico", top_sup_nombre, f"{top_sup_val} ausencias")
-    c3.metric("Líder Afectado", selected_terr)
+# --- FUNCIÓN DE CARGA BLINDADA ---
+@st.cache_data(ttl=300)
+def cargar_excel_drive(url):
+    if not url:
+        return None
+    try:
+        response = requests.get(url, timeout=(5, 30), allow_redirects=True)
+        response.raise_for_status()
+        return io.BytesIO(response.content)
+    except Exception:
+        return None
 
-    st.divider()
+# --- ENRUTADOR PRINCIPAL ---
+if modulo_seleccionado == "1. Copiloto IA (Inasistencias)":
+    bytes_m1 = cargar_excel_drive(url_inas)
+    inasistencias.mostrar_modulo(api_key, bytes_m1) 
 
-    col_chart, col_ai = st.columns([1, 1.2])
-
-    with col_chart:
-        st.subheader("📌 Ausencias por Supervisor")
-        sup_df = top_sup_counts.reset_index()
-        sup_df.columns = ['Supervisor', 'Casos']
-        fig = px.bar(sup_df.head(5), x='Casos', y='Supervisor', orientation='h',
-                     text='Casos', color='Casos', color_continuous_scale='Reds')
-        fig.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, height=350)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_ai:
-        st.subheader("✉️ Tarjeta de Coaching Ejecutivo")
-        
-        if st.button("✨ Generar Mensaje de Coaching", type="primary"):
-            top_3_str = "\n".join([f"- {sup}: {cant} inasistencias" for sup, cant in top_sup_counts.head(3).items()])
-            agentes_sample = ", ".join(df_terr['AGENTE'].dropna().head(5).tolist())
-
-            prompt = f"""
-            Redacta un correo profesional de coaching operativo para {selected_terr}.
-            Datos:
-            - Total ausencias: {total_casos}
-            - Muestra de comercios: {agentes_sample}
-            - Supervisores críticos:
-            {top_3_str}
-
-            Estructura:
-            Asunto breve y directo.
-            Saludo ejecutivo.
-            Diagnóstico con datos exactos.
-            2 Acciones prioritarias enfocadas en los supervisores críticos.
-            Cierre colaborador.
-            Maximum 150 palabras.
-            """
-            
-            with st.spinner("Procesando con Gemini 3.6 Flash..."):
-                try:
-                    res = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
-                    st.success(f"Destinatario: {correo_leader}")
-                    st.text_area("Cuerpo del mensaje (Listo para copiar):", res.text, height=220)
-                except Exception as e:
-                    st.error(f"Error generando reporte: {e}")
-else:
-    st.info("👈 Por favor ingresa tu API Key y sube el archivo Excel en el menú lateral para iniciar.")
+elif modulo_seleccionado == "2. Avance Mensual NPS":
+    bytes_m2 = cargar_excel_drive(url_nps)
+    nps.mostrar_modulo(api_key, bytes_m2)
