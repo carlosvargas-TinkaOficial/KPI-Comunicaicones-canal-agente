@@ -1,0 +1,14 @@
+# Archivos de datos e información sensible
+*.xlsx
+*.xls
+*.csv
+*.json
+
+# Configuraciones locales y secretos de Streamlit
+.streamlit/secrets.toml
+.env
+
+# Archivos de sistema y caché de Python
+__pycache__/
+*.pyc
+.DS_Store
