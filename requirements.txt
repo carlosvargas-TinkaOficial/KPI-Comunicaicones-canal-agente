@@ -1,6 +1,6 @@
-Plaintext
 streamlit
 pandas
 plotly
-google-genai
+requests
 openpyxl
+google-genai
