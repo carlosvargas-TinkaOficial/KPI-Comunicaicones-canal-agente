@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import requests
 import io
+import time
+import hmac
 
 # Importación de módulos independientes
 import inasistencias
@@ -33,12 +35,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- PANTALLA DE CONTROL DE ACCESO (FASE 1) ---
+# --- CONFIGURACIÓN DE SEGURIDAD Y TIEMPOS (FASE 0+) ---
 PASSWORD_CORRECTA = st.secrets.get("APP_PASSWORD", "Tinka2026*")
+MAX_INTENTOS = 3
+TIEMPO_BLOQUEO_SEG = 300          # 5 minutos de bloqueo tras 3 fallos
+TIEMPO_INACTIVIDAD_SEG = 3600      # 60 minutos de inactividad máxima
 
+# Inicialización de variables en el estado de la sesión
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
+if "intentos_fallidos" not in st.session_state:
+    st.session_state["intentos_fallidos"] = 0
+if "tiempo_bloqueo" not in st.session_state:
+    st.session_state["tiempo_bloqueo"] = 0
+if "ultimo_acceso" not in st.session_state:
+    st.session_state["ultimo_acceso"] = time.time()
 
+# --- CONTROL DE INACTIVIDAD DE SESIÓN ---
+if st.session_state["autenticado"]:
+    tiempo_transcurrido = time.time() - st.session_state["ultimo_acceso"]
+    if tiempo_transcurrido > TIEMPO_INACTIVIDAD_SEG:
+        st.session_state["autenticado"] = False
+        st.warning("⚠️ Tu sesión ha expirado por inactividad (60 min). Ingresa nuevamente.")
+        st.rerun()
+    else:
+        st.session_state["ultimo_acceso"] = time.time()
+
+# --- PANTALLA DE CONTROL DE ACCESO CON RATE LIMITING ---
 if not st.session_state["autenticado"]:
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
@@ -48,18 +71,37 @@ if not st.session_state["autenticado"]:
         st.title("🔒 Acceso Restringido")
         st.subheader("Portal Comercial - Canal Agente")
         st.write("Por favor, ingresa la clave de autorización para acceder:")
-        
+
+        # Verificar si la sesión está en periodo de enfriamiento
+        tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time()
+        if tiempo_restante > 0:
+            mins_restantes = int(tiempo_restante // 60) + 1
+            st.error(f"🚫 Demasiados intentos fallidos. Acceso bloqueado temporalmente por {mins_restantes} minuto(s).")
+            st.stop()
+
         clave_ingresada = st.text_input("Contraseña de Acceso:", type="password", key="pwd_input")
+        
         if st.button("🚀 Ingresar al Portal", type="primary"):
-            if clave_ingresada == PASSWORD_CORRECTA:
+            # Validación segura timing-attack resistant
+            if hmac.compare_digest(clave_ingresada, PASSWORD_CORRECTA):
                 st.session_state["autenticado"] = True
+                st.session_state["intentos_fallidos"] = 0
+                st.session_state["tiempo_bloqueo"] = 0
+                st.session_state["ultimo_acceso"] = time.time()
                 st.rerun()
             else:
-                st.error("🔑 Contraseña incorrecta. Acceso denegado.")
-    # Detiene la ejecución aquí: no se descargan datos de Google Drive ni se procesan módulos si no hay autenticación
+                st.session_state["intentos_fallidos"] += 1
+                intentos_restantes = MAX_INTENTOS - st.session_state["intentos_fallidos"]
+                
+                if st.session_state["intentos_fallidos"] >= MAX_INTENTOS:
+                    st.session_state["tiempo_bloqueo"] = time.time() + TIEMPO_BLOQUEO_SEG
+                    st.error("🚫 Excediste el número de intentos permitidos. Pantalla bloqueada por 5 minutos.")
+                    st.rerun()
+                else:
+                    st.error(f"🔑 Contraseña incorrecta. Te quedan {intentos_restantes} intento(s) antes del bloqueo.")
     st.stop()
 
-# --- AUTENTICACIÓN Y CONFIGURACIÓN ---
+# --- AUTENTICACIÓN Y CONFIGURACIÓN DE MÓDULOS ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 url_inas = st.secrets.get("URL_INASISTENCIAS", None)
 url_nps = st.secrets.get("URL_NPS", None)
@@ -82,7 +124,7 @@ if st.sidebar.button("🔒 Cerrar Sesión"):
     st.session_state["autenticado"] = False
     st.rerun()
 
-# --- FUNCIÓN DE CARGA BLINDADA ---
+# --- FUNCIÓN DE CARGA BLINDADA SILENCIOSA ---
 @st.cache_data(ttl=300)
 def cargar_excel_drive(url):
     if not url:
