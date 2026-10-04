@@ -33,6 +33,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- PANTALLA DE CONTROL DE ACCESO (FASE 1) ---
+PASSWORD_CORRECTA = st.secrets.get("APP_PASSWORD", "Tinka2026*")
+
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+if not st.session_state["autenticado"]:
+    col_a, col_b, col_c = st.columns([1, 2, 1])
+    with col_b:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=220)
+        st.title("🔒 Acceso Restringido")
+        st.subheader("Portal Comercial - Canal Agente")
+        st.write("Por favor, ingresa la clave de autorización para acceder:")
+        
+        clave_ingresada = st.text_input("Contraseña de Acceso:", type="password", key="pwd_input")
+        if st.button("🚀 Ingresar al Portal", type="primary"):
+            if clave_ingresada == PASSWORD_CORRECTA:
+                st.session_state["autenticado"] = True
+                st.rerun()
+            else:
+                st.error("🔑 Contraseña incorrecta. Acceso denegado.")
+    # Detiene la ejecución aquí: no se descargan datos de Google Drive ni se procesan módulos si no hay autenticación
+    st.stop()
+
 # --- AUTENTICACIÓN Y CONFIGURACIÓN ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 url_inas = st.secrets.get("URL_INASISTENCIAS", None)
@@ -51,6 +77,10 @@ st.sidebar.divider()
 st.sidebar.header("⚙️ Configuración")
 if not api_key:
     api_key = st.sidebar.text_input("Gemini API Key (AQ...)", type="password")
+
+if st.sidebar.button("🔒 Cerrar Sesión"):
+    st.session_state["autenticado"] = False
+    st.rerun()
 
 # --- FUNCIÓN DE CARGA BLINDADA ---
 @st.cache_data(ttl=300)
