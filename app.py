@@ -125,7 +125,7 @@ if st.sidebar.button("🔒 Cerrar Sesión"):
     st.rerun()
 
 # --- FUNCIÓN DE CARGA BLINDADA SILENCIOSA ---
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)  # <-- Cambiado de 300 a 60 segundos
 def cargar_excel_drive(url):
     if not url:
         return None
