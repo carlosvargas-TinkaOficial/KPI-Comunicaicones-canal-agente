@@ -16,11 +16,20 @@ def mostrar_modulo(api_key, bytes_excel):
         st.error("⚠️ Error al procesar la información de Inasistencias.")
         return
     
+    # OBTENER CONFERENCIAS EN ORDEN (Más reciente primero)
+    if 'post_titulo' in df_inas.columns:
+        # Obtenemos valores únicos respetando el orden de aparición en el Excel
+        conf_unicas = df_inas['post_titulo'].dropna().unique().tolist()
+        # Invertimos la lista para que la última conferencia agregada al Excel aparezca en la posición 0
+        conf_list = conf_unicas[::-1]
+    else:
+        conf_list = []
+
     # FILTROS PRINCIPALES
     col1, col2 = st.columns(2)
     with col1:
-        conf_list = df_inas['post_titulo'].dropna().unique().tolist() if 'post_titulo' in df_inas.columns else []
-        selected_conf = st.selectbox("📅 Seleccionar Conferencia:", conf_list)
+        # index=0 garantiza que por defecto SIEMPRE se seleccione la última conferencia agregada
+        selected_conf = st.selectbox("📅 Seleccionar Conferencia:", conf_list, index=0 if conf_list else 0)
     
     df_c = df_inas[df_inas['post_titulo'] == selected_conf] if 'post_titulo' in df_inas.columns else df_inas
 
@@ -69,6 +78,7 @@ def mostrar_modulo(api_key, bytes_excel):
     try:
         if len(conf_list) > 1 and selected_conf in conf_list:
             idx = conf_list.index(selected_conf)
+            # Como conf_list está invertida, la conferencia anterior inmediata es idx + 1
             if idx < len(conf_list) - 1: 
                 prev_conf = conf_list[idx + 1]
                 df_prev = df_inas[df_inas['post_titulo'] == prev_conf]
