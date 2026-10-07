@@ -35,13 +35,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONFIGURACIÓN DE SEGURIDAD Y TIEMPOS (FASE 0+) ---
+# --- CONFIGURACIÓN DE SEGURIDAD Y TIEMPOS ---
 PASSWORD_CORRECTA = st.secrets.get("APP_PASSWORD", "Tinka2026*")
 MAX_INTENTOS = 3
 TIEMPO_BLOQUEO_SEG = 300          # 5 minutos de bloqueo tras 3 fallos
 TIEMPO_INACTIVIDAD_SEG = 3600      # 60 minutos de inactividad máxima
 
-# Inicialización de variables en el estado de la sesión
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 if "intentos_fallidos" not in st.session_state:
@@ -72,7 +71,6 @@ if not st.session_state["autenticado"]:
         st.subheader("Portal Comercial - Canal Agente")
         st.write("Por favor, ingresa la clave de autorización para acceder:")
 
-        # Verificar si la sesión está en periodo de enfriamiento
         tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time()
         if tiempo_restante > 0:
             mins_restantes = int(tiempo_restante // 60) + 1
@@ -82,7 +80,6 @@ if not st.session_state["autenticado"]:
         clave_ingresada = st.text_input("Contraseña de Acceso:", type="password", key="pwd_input")
         
         if st.button("🚀 Ingresar al Portal", type="primary"):
-            # Validación segura timing-attack resistant
             if hmac.compare_digest(clave_ingresada, PASSWORD_CORRECTA):
                 st.session_state["autenticado"] = True
                 st.session_state["intentos_fallidos"] = 0
@@ -117,6 +114,14 @@ modulo_seleccionado = st.sidebar.radio(
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Configuración")
+
+# Botón para forzar la actualización de datos desde Google Drive
+if st.sidebar.button("🔄 Recargar Datos de Drive"):
+    st.cache_data.clear()
+    st.success("Caché limpiada. Cargando datos frescos...")
+    time.sleep(1)
+    st.rerun()
+
 if not api_key:
     api_key = st.sidebar.text_input("Gemini API Key (AQ...)", type="password")
 
@@ -124,13 +129,15 @@ if st.sidebar.button("🔒 Cerrar Sesión"):
     st.session_state["autenticado"] = False
     st.rerun()
 
-# --- FUNCIÓN DE CARGA BLINDADA SILENCIOSA ---
-@st.cache_data(ttl=60)  # <-- Cambiado de 300 a 60 segundos
+# --- FUNCIÓN DE CARGA BLINDADA SILENCIOSA CON CACHE BUSTING ---
+@st.cache_data(ttl=60)
 def cargar_excel_drive(url):
     if not url:
         return None
     try:
-        response = requests.get(url, timeout=(5, 30), allow_redirects=True)
+        # Se agrega un timestamp único a la URL para obligar a Google Drive a entregar la última versión
+        cache_buster_url = f"{url}&_cb={int(time.time())}" if "?" in url else f"{url}?_cb={int(time.time())}"
+        response = requests.get(cache_buster_url, timeout=(5, 30), allow_redirects=True)
         response.raise_for_status()
         return io.BytesIO(response.content)
     except Exception:
