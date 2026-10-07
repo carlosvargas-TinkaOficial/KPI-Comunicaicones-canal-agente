@@ -7,7 +7,6 @@ import hmac
 
 # Importación de módulos independientes
 import inasistencias
-import nps
 
 st.set_page_config(page_title="La Tinka - Portal Canal Agente", layout="wide", initial_sidebar_state="expanded")
 
@@ -101,16 +100,12 @@ if not st.session_state["autenticado"]:
 # --- AUTENTICACIÓN Y CONFIGURACIÓN DE MÓDULOS ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 url_inas = st.secrets.get("URL_INASISTENCIAS", None)
-url_nps = st.secrets.get("URL_NPS", None)
 
 st.sidebar.title("📌 Canal Agente")
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=180)
 
-modulo_seleccionado = st.sidebar.radio(
-    "Selecciona la herramienta:",
-    ["1. Copiloto IA (Inasistencias)", "2. Avance Mensual NPS"]
-)
+st.sidebar.info("🎯 **Herramienta:** Copiloto IA (Inasistencias)")
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Configuración")
@@ -135,7 +130,6 @@ def cargar_excel_drive(url):
     if not url:
         return None
     try:
-        # Se agrega un timestamp único a la URL para obligar a Google Drive a entregar la última versión
         cache_buster_url = f"{url}&_cb={int(time.time())}" if "?" in url else f"{url}?_cb={int(time.time())}"
         response = requests.get(cache_buster_url, timeout=(5, 30), allow_redirects=True)
         response.raise_for_status()
@@ -143,11 +137,6 @@ def cargar_excel_drive(url):
     except Exception:
         return None
 
-# --- ENRUTADOR PRINCIPAL ---
-if modulo_seleccionado == "1. Copiloto IA (Inasistencias)":
-    bytes_m1 = cargar_excel_drive(url_inas)
-    inasistencias.mostrar_modulo(api_key, bytes_m1) 
-
-elif modulo_seleccionado == "2. Avance Mensual NPS":
-    bytes_m2 = cargar_excel_drive(url_nps)
-    nps.mostrar_modulo(api_key, bytes_m2)
+# --- CARGA DIRECTA DEL MÓDULO DE INASISTENCIAS ---
+bytes_m1 = cargar_excel_drive(url_inas)
+inasistencias.mostrar_modulo(api_key, bytes_m1)
