@@ -18,17 +18,14 @@ def mostrar_modulo(api_key, bytes_excel):
     
     # OBTENER CONFERENCIAS EN ORDEN (Más reciente primero)
     if 'post_titulo' in df_inas.columns:
-        # Obtenemos valores únicos respetando el orden de aparición en el Excel
         conf_unicas = df_inas['post_titulo'].dropna().unique().tolist()
-        # Invertimos la lista para que la última conferencia agregada al Excel aparezca en la posición 0
-        conf_list = conf_unicas[::-1]
+        conf_list = conf_unicas[::-1]  # Invertido: la más reciente queda en posición 0
     else:
         conf_list = []
 
-    # FILTROS PRINCIPALES
+    # FILTROS PRINCIPALES DE LA PARTE SUPERIOR
     col1, col2 = st.columns(2)
     with col1:
-        # index=0 garantiza que por defecto SIEMPRE se seleccione la última conferencia agregada
         selected_conf = st.selectbox("📅 Seleccionar Conferencia:", conf_list, index=0 if conf_list else 0)
     
     df_c = df_inas[df_inas['post_titulo'] == selected_conf] if 'post_titulo' in df_inas.columns else df_inas
@@ -78,7 +75,6 @@ def mostrar_modulo(api_key, bytes_excel):
     try:
         if len(conf_list) > 1 and selected_conf in conf_list:
             idx = conf_list.index(selected_conf)
-            # Como conf_list está invertida, la conferencia anterior inmediata es idx + 1
             if idx < len(conf_list) - 1: 
                 prev_conf = conf_list[idx + 1]
                 df_prev = df_inas[df_inas['post_titulo'] == prev_conf]
@@ -97,6 +93,13 @@ def mostrar_modulo(api_key, bytes_excel):
     comercios_unicos = df_tipo['username'].nunique() if 'username' in df_tipo.columns else len(df_tipo)
     c4.metric("Comercio Únicos", f"{selected_tipo if selected_tipo != 'Todos' else 'Total'}: {comercios_unicos}")
     st.divider()
+
+    # CONFIGURACIÓN DESACTIVACIÓN DE ZOOM ACCIDENTAL (OBSERVACIÓN 1°)
+    plotly_config = {
+        'scrollZoom': False,
+        'displayModeBar': False,
+        'doubleClick': 'reset'
+    }
 
     # GRÁFICOS
     col_ch1, col_ch2 = st.columns(2)
@@ -118,9 +121,10 @@ def mostrar_modulo(api_key, bytes_excel):
                 plot_bgcolor='rgba(0,0,0,0)', 
                 xaxis_title="", 
                 yaxis_title="Ausencias", 
+                dragmode=False,
                 xaxis={'categoryorder': 'array', 'categoryarray': trend_data['fecha_corta']}
             )
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, use_container_width=True, config=plotly_config)
             
     with col_ch2:
         st.subheader("📌 Ausencias por Supervisor")
@@ -128,17 +132,76 @@ def mostrar_modulo(api_key, bytes_excel):
             sup_data = df_tipo.groupby('Jerarquia_Dinamica').size().reset_index(name='Inasistencias').sort_values('Inasistencias', ascending=True)
             fig2 = px.bar(sup_data, y='Jerarquia_Dinamica', x='Inasistencias', text='Inasistencias', orientation='h', color='Inasistencias', color_continuous_scale=['#FF6700', '#3CC666'])
             fig2.update_traces(textposition='auto')
-            fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="", coloraxis_showscale=False)
-            st.plotly_chart(fig2, use_container_width=True)
+            fig2.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                xaxis_title="", 
+                yaxis_title="", 
+                dragmode=False,
+                coloraxis_showscale=False
+            )
+            st.plotly_chart(fig2, use_container_width=True, config=plotly_config)
 
     st.divider()
 
-    # TABLA Y SUPERVISORES
-    st.subheader("📋 Agentes Pendientes & Gestión de Supervisor")
-    sups = ["Todos"] + df_tipo['Jerarquia_Dinamica'].dropna().unique().tolist() if 'Jerarquia_Dinamica' in df_tipo.columns else ["Todos"]
-    selected_sup = st.selectbox("Filtrar Tabla por Supervisor:", sups)
-    df_final = df_tipo if selected_sup == "Todos" else df_tipo[df_tipo['Jerarquia_Dinamica'] == selected_sup]
+    # CÁLCULO DE INASISTENCIAS CONTINUAS (OBSERVACIÓN 2°)
+    df_agentes = df_tipo.copy()
+    
+    if not df_agentes.empty and 'username' in df_agentes.columns and conf_list and selected_conf in conf_list:
+        idx_sel = conf_list.index(selected_conf)
+        eval_confs = conf_list[idx_sel:]  # Desde la seleccionada hacia las conferencias anteriores
+        
+        # Mapa de terminales ausentes por conferencia evaluada
+        absent_sets = [
+            set(df_inas[df_inas['post_titulo'] == c]['username'].dropna())
+            for c in eval_confs
+        ]
+        
+        def contar_inasistencias_continuas(user):
+            cant = 0
+            for conf_set in absent_sets:
+                if user in conf_set:
+                    cant += 1
+                else:
+                    break
+            return cant
 
+        df_agentes['Cantidad de Inasistencias continuas'] = df_agentes['username'].apply(contar_inasistencias_continuas)
+    else:
+        df_agentes['Cantidad de Inasistencias continuas'] = 1
+
+    # SECCIÓN: AGENTES PENDIENTES & GESTIÓN DE SUPERVISOR
+    st.subheader("📋 Agentes Pendientes & Gestión de Supervisor")
+    
+    col_f1, col_f2, col_f3 = st.columns(3)
+    
+    with col_f1:
+        tipos_tabla = ["Todos"] + df_agentes['TIPO'].dropna().unique().tolist() if 'TIPO' in df_agentes.columns else ["Todos"]
+        selected_tipo_tabla = st.selectbox("Filtrar por Tipo de Punto:", tipos_tabla, key="f_tipo_tabla")
+        
+    with col_f2:
+        sups = ["Todos"] + df_agentes['Jerarquia_Dinamica'].dropna().unique().tolist() if 'Jerarquia_Dinamica' in df_agentes.columns else ["Todos"]
+        selected_sup = st.selectbox("Filtrar por Supervisor:", sups, key="f_sup_tabla")
+
+    with col_f3:
+        cantidades_unicas = sorted(df_agentes['Cantidad de Inasistencias continuas'].unique()) if 'Cantidad de Inasistencias continuas' in df_agentes.columns else [1]
+        opciones_continuas = ["Todas"] + [str(c) for c in cantidades_unicas]
+        selected_continuas = st.selectbox("Filtrar por Inasistencias Continuas:", opciones_continuas, key="f_cont_tabla")
+
+    # APLICAR FILTROS A LA TABLA
+    df_tabla = df_agentes.copy()
+    if selected_tipo_tabla != "Todos" and 'TIPO' in df_tabla.columns:
+        df_tabla = df_tabla[df_tabla['TIPO'] == selected_tipo_tabla]
+    if selected_sup != "Todos" and 'Jerarquia_Dinamica' in df_tabla.columns:
+        df_tabla = df_tabla[df_tabla['Jerarquia_Dinamica'] == selected_sup]
+    if selected_continuas != "Todas" and 'Cantidad de Inasistencias continuas' in df_tabla.columns:
+        df_tabla = df_tabla[df_tabla['Cantidad de Inasistencias continuas'] == int(selected_continuas)]
+
+    # OCULTAR COLUMNAS NO DESEADAS
+    cols_a_eliminar = ['post_titulo', 'post Titulo', 'TERRITORIAL', 'Terminales pendientes', 'Terminales Pendientes']
+    df_mostrar = df_tabla.drop(columns=[c for c in cols_a_eliminar if c in df_tabla.columns])
+
+    # COACHING SUPERVISOR
     with st.expander(f"💡 Recibe un consejo experto ({selected_sup})", expanded=False):
         if st.button("🚀 Generar Diagnóstico Supervisor", type="primary", key="btn_ia_sup"):
             if not api_key:
@@ -148,7 +211,7 @@ def mostrar_modulo(api_key, bytes_excel):
                 prompt_sup = f"""
                 Actúa como Coach de Ventas para La Tinka S.A.
                 Genera una recomendación de gestión para el Supervisor '{selected_sup}' en la conferencia '{selected_conf}'.
-                Tiene {len(df_final)} agentes ausentes. Brinda 2 acciones directas y un mensaje corto para WhatsApp.
+                Tiene {len(df_mostrar)} agentes ausentes. Brinda 2 acciones directas y un mensaje corto para WhatsApp.
                 """
                 with st.spinner("Generando coaching..."):
                     try:
@@ -157,8 +220,12 @@ def mostrar_modulo(api_key, bytes_excel):
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-    st.dataframe(df_final, use_container_width=True, height=300)
+    st.dataframe(df_mostrar, use_container_width=True, height=300)
+    
     if st.button("📋 Copiar Inasistencias para WhatsApp", key="cp_m1"):
-        if not df_final.empty:
-            lineas = [f"Comercio: {r.get('username', '')} - {r.get('AGENTE', '')} | Sup: {r.get('Jerarquia_Dinamica', '')}" for _, r in df_final.iterrows()]
+        if not df_mostrar.empty:
+            lineas = [
+                f"Comercio: {r.get('username', '')} - {r.get('AGENTE', '')} | Inasistencias Continuas: {r.get('Cantidad de Inasistencias continuas', 1)} | Sup: {r.get('Jerarquia_Dinamica', '')}" 
+                for _, r in df_mostrar.iterrows()
+            ]
             st.code("\n".join(lineas), language=None)
