@@ -94,7 +94,7 @@ def mostrar_modulo(api_key, bytes_excel):
     c4.metric("Comercio Únicos", f"{selected_tipo if selected_tipo != 'Todos' else 'Total'}: {comercios_unicos}")
     st.divider()
 
-    # CONFIGURACIÓN DESACTIVACIÓN DE ZOOM ACCIDENTAL (OBSERVACIÓN 1°)
+    # CONFIGURACIÓN DESACTIVACIÓN DE ZOOM ACCIDENTAL
     plotly_config = {
         'scrollZoom': False,
         'displayModeBar': False,
@@ -144,14 +144,13 @@ def mostrar_modulo(api_key, bytes_excel):
 
     st.divider()
 
-    # CÁLCULO DE INASISTENCIAS CONTINUAS (OBSERVACIÓN 2°)
+    # CÁLCULO DE INASISTENCIAS CONTINUAS
     df_agentes = df_tipo.copy()
     
     if not df_agentes.empty and 'username' in df_agentes.columns and conf_list and selected_conf in conf_list:
         idx_sel = conf_list.index(selected_conf)
-        eval_confs = conf_list[idx_sel:]  # Desde la seleccionada hacia las conferencias anteriores
+        eval_confs = conf_list[idx_sel:]
         
-        # Mapa de terminales ausentes por conferencia evaluada
         absent_sets = [
             set(df_inas[df_inas['post_titulo'] == c]['username'].dropna())
             for c in eval_confs
@@ -184,9 +183,15 @@ def mostrar_modulo(api_key, bytes_excel):
         selected_sup = st.selectbox("Filtrar por Supervisor:", sups, key="f_sup_tabla")
 
     with col_f3:
+        # AQUÍ ESTÁ EL CAMBIO PRINCIPAL: MULTISELECT 
         cantidades_unicas = sorted(df_agentes['Cantidad de Inasistencias continuas'].unique()) if 'Cantidad de Inasistencias continuas' in df_agentes.columns else [1]
-        opciones_continuas = ["Todas"] + [str(c) for c in cantidades_unicas]
-        selected_continuas = st.selectbox("Filtrar por Inasistencias Continuas:", opciones_continuas, key="f_cont_tabla")
+        selected_continuas = st.multiselect(
+            "Filtrar por Inasistencias Continuas:", 
+            options=cantidades_unicas,
+            default=[], # Si está vacío, muestra todos
+            placeholder="Selecciona uno o varios (Vacío = Todos)",
+            key="f_cont_tabla"
+        )
 
     # APLICAR FILTROS A LA TABLA
     df_tabla = df_agentes.copy()
@@ -194,8 +199,10 @@ def mostrar_modulo(api_key, bytes_excel):
         df_tabla = df_tabla[df_tabla['TIPO'] == selected_tipo_tabla]
     if selected_sup != "Todos" and 'Jerarquia_Dinamica' in df_tabla.columns:
         df_tabla = df_tabla[df_tabla['Jerarquia_Dinamica'] == selected_sup]
-    if selected_continuas != "Todas" and 'Cantidad de Inasistencias continuas' in df_tabla.columns:
-        df_tabla = df_tabla[df_tabla['Cantidad de Inasistencias continuas'] == int(selected_continuas)]
+    
+    # LÓGICA DE FILTRADO PARA MULTISELECT
+    if selected_continuas and 'Cantidad de Inasistencias continuas' in df_tabla.columns:
+        df_tabla = df_tabla[df_tabla['Cantidad de Inasistencias continuas'].isin(selected_continuas)]
 
     # OCULTAR COLUMNAS NO DESEADAS
     cols_a_eliminar = ['post_titulo', 'post Titulo', 'TERRITORIAL', 'Terminales pendientes', 'Terminales Pendientes']
