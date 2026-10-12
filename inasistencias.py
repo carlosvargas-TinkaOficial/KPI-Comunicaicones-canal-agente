@@ -15,7 +15,13 @@ def mostrar_modulo(api_key, bytes_excel):
     except Exception:
         st.error("⚠️ Error al procesar la información de Inasistencias.")
         return
-    
+
+    # --- NORMALIZACIÓN DE TIPOS DE DATOS Y ESPACIOS ---
+    if 'username' in df_inas.columns:
+        df_inas['username'] = df_inas['username'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    if 'post_titulo' in df_inas.columns:
+        df_inas['post_titulo'] = df_inas['post_titulo'].astype(str).str.strip()
+
     # OBTENER CONFERENCIAS EN ORDEN (Más reciente primero)
     if 'post_titulo' in df_inas.columns:
         conf_unicas = df_inas['post_titulo'].dropna().unique().tolist()
@@ -61,7 +67,7 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching con Gemini..."):
                     try:
-                        res = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
+                        res = client.models.generate-content(model="gemini-3.6-flash", contents=prompt)
                         st.markdown(res.text)
                     except Exception as e:
                         st.error(f"Error al conectar con la IA: {e}")
@@ -144,7 +150,7 @@ def mostrar_modulo(api_key, bytes_excel):
 
     st.divider()
 
-    # CÁLCULO DE INASISTENCIAS CONTINUAS
+    # CÁLCULO DE INASISTENCIAS CONTINUAS CON USERNAME NORMALIZADO
     df_agentes = df_tipo.copy()
     
     if not df_agentes.empty and 'username' in df_agentes.columns and conf_list and selected_conf in conf_list:
@@ -152,7 +158,7 @@ def mostrar_modulo(api_key, bytes_excel):
         eval_confs = conf_list[idx_sel:]
         
         absent_sets = [
-            set(df_inas[df_inas['post_titulo'] == c]['username'].dropna())
+            set(df_inas[df_inas['post_titulo'] == c]['username'].dropna().tolist())
             for c in eval_confs
         ]
         
@@ -183,12 +189,11 @@ def mostrar_modulo(api_key, bytes_excel):
         selected_sup = st.selectbox("Filtrar por Supervisor:", sups, key="f_sup_tabla")
 
     with col_f3:
-        # AQUÍ ESTÁ EL CAMBIO PRINCIPAL: MULTISELECT 
         cantidades_unicas = sorted(df_agentes['Cantidad de Inasistencias continuas'].unique()) if 'Cantidad de Inasistencias continuas' in df_agentes.columns else [1]
         selected_continuas = st.multiselect(
             "Filtrar por Inasistencias Continuas:", 
             options=cantidades_unicas,
-            default=[], # Si está vacío, muestra todos
+            default=[],
             placeholder="Selecciona uno o varios (Vacío = Todos)",
             key="f_cont_tabla"
         )
@@ -200,7 +205,6 @@ def mostrar_modulo(api_key, bytes_excel):
     if selected_sup != "Todos" and 'Jerarquia_Dinamica' in df_tabla.columns:
         df_tabla = df_tabla[df_tabla['Jerarquia_Dinamica'] == selected_sup]
     
-    # LÓGICA DE FILTRADO PARA MULTISELECT
     if selected_continuas and 'Cantidad de Inasistencias continuas' in df_tabla.columns:
         df_tabla = df_tabla[df_tabla['Cantidad de Inasistencias continuas'].isin(selected_continuas)]
 
@@ -222,7 +226,7 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching..."):
                     try:
-                        res_sup = client.models.generate_content(model="gemini-3.6-flash", contents=prompt_sup)
+                        res_sup = client.models.generate-content(model="gemini-3.6-flash", contents=prompt_sup)
                         st.markdown(res_sup.text)
                     except Exception as e:
                         st.error(f"Error: {e}")
