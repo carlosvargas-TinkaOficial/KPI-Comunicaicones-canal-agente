@@ -16,7 +16,7 @@ def mostrar_modulo(api_key, bytes_excel):
         st.error("⚠️ Error al procesar la información de Inasistencias.")
         return
 
-    # --- NORMALIZACIÓN DE TIPOS DE DATOS Y ESPACIOS ---
+    # --- NORMALIZACIÓN DE DATOS ---
     if 'username' in df_inas.columns:
         df_inas['username'] = df_inas['username'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     if 'post_titulo' in df_inas.columns:
@@ -25,7 +25,7 @@ def mostrar_modulo(api_key, bytes_excel):
     # OBTENER CONFERENCIAS EN ORDEN (Más reciente primero)
     if 'post_titulo' in df_inas.columns:
         conf_unicas = df_inas['post_titulo'].dropna().unique().tolist()
-        conf_list = conf_unicas[::-1]  # Invertido: la más reciente queda en posición 0
+        conf_list = conf_unicas[::-1]
     else:
         conf_list = []
 
@@ -67,7 +67,8 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching con Gemini..."):
                     try:
-                        res = client.models.generate-content(model="gemini-3.6-flash", contents=prompt)
+                        # CORRECCIÓN: guion bajo y modelo estable
+                        res = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
                         st.markdown(res.text)
                     except Exception as e:
                         st.error(f"Error al conectar con la IA: {e}")
@@ -150,28 +151,40 @@ def mostrar_modulo(api_key, bytes_excel):
 
     st.divider()
 
-    # CÁLCULO DE INASISTENCIAS CONTINUAS CON USERNAME NORMALIZADO
+    # CÁLCULO DE INASISTENCIAS CONTINUAS FILTRADO POR ÁMBITO (TERRITORIO / TIPO)
     df_agentes = df_tipo.copy()
     
     if not df_agentes.empty and 'username' in df_agentes.columns and conf_list and selected_conf in conf_list:
-        idx_sel = conf_list.index(selected_conf)
-        eval_confs = conf_list[idx_sel:]
+        df_scope = df_inas.copy()
+        if selected_terr != "Todos" and 'TERRITORIAL' in df_scope.columns:
+            df_scope = df_scope[df_scope['TERRITORIAL'] == selected_terr]
+        if selected_tipo != "Todos" and 'TIPO' in df_scope.columns:
+            df_scope = df_scope[df_scope['TIPO'] == selected_tipo]
+            
+        confs_en_scope = set(df_scope['post_titulo'].dropna().unique())
+        conf_list_scope = [c for c in conf_list if c in confs_en_scope]
         
-        absent_sets = [
-            set(df_inas[df_inas['post_titulo'] == c]['username'].dropna().tolist())
-            for c in eval_confs
-        ]
-        
-        def contar_inasistencias_continuas(user):
-            cant = 0
-            for conf_set in absent_sets:
-                if user in conf_set:
-                    cant += 1
-                else:
-                    break
-            return cant
+        if selected_conf in conf_list_scope:
+            idx_sel = conf_list_scope.index(selected_conf)
+            eval_confs = conf_list_scope[idx_sel:]
+            
+            absent_sets = [
+                set(df_inas[df_inas['post_titulo'] == c]['username'].dropna().tolist())
+                for c in eval_confs
+            ]
+            
+            def contar_inasistencias_continuas(user):
+                cant = 0
+                for conf_set in absent_sets:
+                    if user in conf_set:
+                        cant += 1
+                    else:
+                        break
+                return cant
 
-        df_agentes['Cantidad de Inasistencias continuas'] = df_agentes['username'].apply(contar_inasistencias_continuas)
+            df_agentes['Cantidad de Inasistencias continuas'] = df_agentes['username'].apply(contar_inasistencias_continuas)
+        else:
+            df_agentes['Cantidad de Inasistencias continuas'] = 1
     else:
         df_agentes['Cantidad de Inasistencias continuas'] = 1
 
@@ -226,7 +239,8 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching..."):
                     try:
-                        res_sup = client.models.generate-content(model="gemini-3.6-flash", contents=prompt_sup)
+                        # CORRECCIÓN: guion bajo y modelo estable
+                        res_sup = client.models.generate_content(model="gemini-1.5-flash", contents=prompt_sup)
                         st.markdown(res_sup.text)
                     except Exception as e:
                         st.error(f"Error: {e}")
