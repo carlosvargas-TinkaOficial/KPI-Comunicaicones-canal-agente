@@ -67,8 +67,8 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching con Gemini..."):
                     try:
-                        # ACTUALIZADO: Se usa la nueva versión gemini-2.5-flash
-                        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                        # ACTUALIZADO: Se usa la nueva versión gemini-3.8-flash según lo indicado por la API
+                        res = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
                         st.markdown(res.text)
                     except Exception as e:
                         st.error(f"Error al conectar con la IA: {e}")
@@ -239,8 +239,8 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching..."):
                     try:
-                        # ACTUALIZADO: Se usa la nueva versión gemini-2.5-flash
-                        res_sup = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_sup)
+                        # ACTUALIZADO: Se usa la nueva versión gemini-3.8-flash según lo indicado por la API
+                        res_sup = client.models.generate_content(model="gemini-3.8-flash", contents=prompt_sup)
                         st.markdown(res_sup.text)
                     except Exception as e:
                         st.error(f"Error: {e}")
