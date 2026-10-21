@@ -11,12 +11,35 @@ def mostrar_modulo(api_key, bytes_excel):
         return
         
     try:
+        # Lee la primera pestaña del archivo Excel cargado
         df_inas = pd.read_excel(bytes_excel)
     except Exception:
         st.error("⚠️ Error al procesar la información de Inasistencias.")
         return
 
-    # --- NORMALIZACIÓN DE DATOS ---
+    # --- CAPA DE COMPATIBILIDAD CON NUEVO FORMATO DE EXCEL ---
+    df_inas.columns = [str(c).strip() for c in df_inas.columns]
+
+    # 1. Compatibilidad de nombres de terminal (TERMINAL vs username)
+    if 'TERMINAL' in df_inas.columns and 'username' not in df_inas.columns:
+        df_inas['username'] = df_inas['TERMINAL']
+
+    # 2. Compatibilidad de Supervisor (Jerarquia_Dinamica)
+    col_jer = [c for c in df_inas.columns if 'jerarquia' in c.lower()]
+    if col_jer and 'Jerarquia_Dinamica' not in df_inas.columns:
+        df_inas['Jerarquia_Dinamica'] = df_inas[col_jer[0]]
+
+    # 3. Compatibilidad de AGENTE (si la columna no está en la nueva base, no rompe la app)
+    if 'AGENTE' not in df_inas.columns:
+        df_inas['AGENTE'] = df_inas.get('username', '')
+
+    # 4. FILTRAR SOLO INASISTENCIAS = 1 (Ignorando asistencia = 1 / inasistencia = 0)
+    col_inas_list = [c for c in df_inas.columns if c.lower() == 'inasistencia']
+    if col_inas_list:
+        col_i = col_inas_list[0]
+        df_inas = df_inas[pd.to_numeric(df_inas[col_i], errors='coerce') == 1].copy()
+
+    # 5. Normalización de formato de texto y limpieza de espacios
     if 'username' in df_inas.columns:
         df_inas['username'] = df_inas['username'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     if 'post_titulo' in df_inas.columns:
@@ -67,7 +90,6 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching con Gemini..."):
                     try:
-                        # ACTUALIZADO: Se usa la nueva versión gemini-3.8-flash según lo indicado por la API
                         res = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
                         st.markdown(res.text)
                     except Exception as e:
@@ -151,7 +173,7 @@ def mostrar_modulo(api_key, bytes_excel):
 
     st.divider()
 
-    # CÁLCULO DE INASISTENCIAS CONTINUAS FILTRADO POR ÁMBITO (TERRITORIO / TIPO)
+    # CÁLCULO DE INASISTENCIAS CONTINUAS
     df_agentes = df_tipo.copy()
     
     if not df_agentes.empty and 'username' in df_agentes.columns and conf_list and selected_conf in conf_list:
@@ -221,8 +243,12 @@ def mostrar_modulo(api_key, bytes_excel):
     if selected_continuas and 'Cantidad de Inasistencias continuas' in df_tabla.columns:
         df_tabla = df_tabla[df_tabla['Cantidad de Inasistencias continuas'].isin(selected_continuas)]
 
-    # OCULTAR COLUMNAS NO DESEADAS
-    cols_a_eliminar = ['post_titulo', 'post Titulo', 'TERRITORIAL', 'Terminales pendientes', 'Terminales Pendientes']
+    # OCULTAR COLUMNAS NO DESEADAS (SE INCLUYEN LAS NUEVAS COLUMNAS)
+    cols_a_eliminar = [
+        'post_titulo', 'post Titulo', 'TERRITORIAL', 
+        'Terminales pendientes', 'Terminales Pendientes',
+        'Objetivo', 'Asistencia', 'Inasistencia', '% Asistencia', 'TERMINAL'
+    ]
     df_mostrar = df_tabla.drop(columns=[c for c in cols_a_eliminar if c in df_tabla.columns])
 
     # COACHING SUPERVISOR
@@ -239,7 +265,6 @@ def mostrar_modulo(api_key, bytes_excel):
                 """
                 with st.spinner("Generando coaching..."):
                     try:
-                        # ACTUALIZADO: Se usa la nueva versión gemini-3.8-flash según lo indicado por la API
                         res_sup = client.models.generate_content(model="gemini-3.8-flash", contents=prompt_sup)
                         st.markdown(res_sup.text)
                     except Exception as e:
