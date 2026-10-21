@@ -2,43 +2,15 @@ import streamlit as st
 import pandas as pd
 import re
 
-# --- DEFINICIÓN DE LA VENTANA POP-UP (MODAL DIALOG) ---
-if hasattr(st, "dialog"):
-    dialog_decorador = st.dialog
-elif hasattr(st, "experimental_dialog"):
-    dialog_decorador = st.experimental_dialog
-else:
-    dialog_decorador = None
-
-def renderizar_popup_evidencia(terminal, regional, supervisor, estado, url):
-    st.markdown(f"### 📸 Evidencia del Terminal: `{terminal}`")
-    st.markdown(f"**Regional:** {regional} &nbsp;|&nbsp; **Supervisor:** {supervisor}")
-    st.markdown(f"**Estado de Validación:** `{estado}`")
-    st.divider()
-    if url and url != "-":
-        st.image(url, caption=f"Foto enviada por Terminal {terminal}", use_container_width=True)
-        st.markdown(f"[🔗 Abrir imagen original en nueva pestaña]({url})")
-    else:
-        st.warning("⚠️ Este terminal no cuenta con evidencia fotográfica registrada (Sin respuesta).")
-
-if dialog_decorador:
-    @dialog_decorador("👁️ Visualizador de Evidencia de Pozo")
-    def abrir_modal_foto(terminal, regional, supervisor, estado, url):
-        renderizar_popup_evidencia(terminal, regional, supervisor, estado, url)
-else:
-    def abrir_modal_foto(terminal, regional, supervisor, estado, url):
-        with st.expander(f"👁️ Evidencia del Terminal {terminal}", expanded=True):
-            renderizar_popup_evidencia(terminal, regional, supervisor, estado, url)
-
 # --- FUNCIÓN DE LIMPIEZA Y CORRECCIÓN DE URLs (.jpe -> .jpeg) ---
 def limpiar_url_evidencia(url):
     if not url or pd.isna(url):
-        return "-"
+        return None
     url_str = str(url).strip()
     if url_str == "" or url_str.lower() in ["nan", "none", "-", "null"]:
-        return "-"
-    # Reemplaza .jpe por .jpeg de forma segura (incluso si tiene parámetros de token al final)
-    url_str = re.sub(r'\.jpe(?=[?#]|\$)', '.jpeg', url_str, flags=re.IGNORECASE)
+        return None
+    # Reemplaza .jpe por .jpeg de forma segura al final o antes de parámetros ?token=
+    url_str = re.sub(r'\.jpe(?=[?#]|$)', '.jpeg', url_str, flags=re.IGNORECASE)
     return url_str
 
 def ordenar_formularios_por_fecha(forms):
@@ -74,7 +46,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         st.error("No se encontró la columna de terminal o username en la base de Inasistencias.")
         return
 
-    df_inas['TERMINAL_CLEAN'] = df_inas[col_term_inas].astype(str).str.strip().str.replace(r'\.0\$', '', regex=True)
+    df_inas['TERMINAL_CLEAN'] = df_inas[col_term_inas].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     col_reg = next((c for c in df_inas.columns if any(w in c.lower() for w in ['territorial', 'regional'])), 'TERRITORIAL')
     col_sup = next((c for c in df_inas.columns if 'jerarquia' in c.lower() or 'supervisor' in c.lower()), 'Jerarquia_Dinamica')
     
@@ -88,12 +60,12 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
     if not col_term_p:
         st.error("No se encontró la columna TERMINAL en Data_Pozos.")
         return
-    df_p['TERMINAL'] = df_p[col_term_p].astype(str).str.strip().str.replace(r'\.0\$', '', regex=True)
+    df_p['TERMINAL'] = df_p[col_term_p].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
     # Identificar columna de URL si existe
     col_url = next((c for c in df_p.columns if any(w in str(c).lower() for w in ['url', 'link', 'foto', 'image', 'imagen', 'evidencia'])), None)
 
-    # REGLA 3: Formularios con 'POZO' y sin 'NL'
+    # REGLA: Formularios con 'POZO' y sin 'NL'
     if 'FORMULARIO' not in df_p.columns:
         st.error("No se encontró la columna FORMULARIO en Data_Pozos.")
         return
@@ -142,14 +114,14 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
             
             if puntos_term.empty:
                 estado = "Sin respuesta"
-                url_val = "-"
+                url_val = None
             else:
                 resultados = puntos_term['RESULTADO'].astype(str).str.lower().tolist()
                 tiene_match = any('match' == r for r in resultados)
                 tiene_no_match = any('no_match' == r for r in resultados)
                 
                 # Obtener y sanitizar la URL del último intento
-                raw_url = puntos_term[col_url].dropna().iloc[-1] if (col_url and not puntos_term[col_url].dropna().empty) else "-"
+                raw_url = puntos_term[col_url].dropna().iloc[-1] if (col_url and not puntos_term[col_url].dropna().empty) else None
                 url_val = limpiar_url_evidencia(raw_url)
                 
                 if tiene_match:
@@ -157,7 +129,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                         estado = "True - 1er intento"
                     else:
                         estado = "True - Segundo intento"
-                    url_val = "-"
+                    url_val = None  # Solo los no comprobados llevan link
                 else:
                     estado = "No comprobado"
 
@@ -166,11 +138,11 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                 'Supervisor': sup,
                 'Terminal': term,
                 'Estado': estado,
-                'URL': url_val
+                'Evidencia': url_val
             })
         return pd.DataFrame(registros)
 
-    # --- 5. CUADRO 1: EVOLUTIVO DE LA ENCUESTA (DISEÑO IDÉNTICO A LA CAPTURA) ---
+    # --- 5. CUADRO 1: EVOLUTIVO DE LA ENCUESTA (DISEÑO INSTITUCIONAL) ---
     st.subheader("📊 Evolutivo de la Encuesta")
 
     datos_evolutivo = {}
@@ -237,101 +209,49 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
 
     st.divider()
 
-    # --- 6. CUADRO 2: ALERTAS Y PENDIENTES CON FILTRO DE ESTADO Y VISOR POP-UP ---
+    # --- 6. CUADRO 2: ALERTAS Y PENDIENTES CON ENLACE DIRECTO TÁCTIL ---
     st.subheader(f"⚠️ Alertas y Pendientes ({selected_form})")
     
     df_activo = evaluar_formulario(selected_form, df_objetivo_filtrado)
     df_alertas_base = df_activo[df_activo['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
 
-    # FILTRO POR ESTADO (No comprobado vs Sin respuesta)
-    col_est1, col_est2 = st.columns([1, 2])
-    with col_est1:
-        filtro_estado = st.selectbox(
-            "Filtrar por Estado:",
-            ["Todos", "No comprobado", "Sin respuesta"],
-            key="f_estado_alertas"
-        )
+    # FILTRO POR ESTADO
+    filtro_estado = st.selectbox(
+        "Filtrar por Estado:",
+        ["Todos", "No comprobado", "Sin respuesta"],
+        key="f_estado_alertas"
+    )
     
     df_alertas = df_alertas_base.copy()
     if filtro_estado != "Todos":
         df_alertas = df_alertas[df_alertas['Estado'] == filtro_estado]
 
-    # Columna visual con el icono de ojo
-    df_alertas['Evidencia'] = df_alertas['URL'].apply(
-        lambda u: "👁️ Ver Foto" if u != "-" else "-"
-    )
-
-    cols_orden = ['Regional', 'Supervisor', 'Terminal', 'Estado', 'Evidencia', 'URL']
+    cols_orden = ['Regional', 'Supervisor', 'Terminal', 'Estado', 'Evidencia']
     df_mostrar = df_alertas[[c for c in cols_orden if c in df_alertas.columns]]
 
     if df_mostrar.empty:
         st.success("🎉 ¡Excelente! No hay pendientes registrados bajo los filtros seleccionados.")
     else:
-        # Selector rápido para abrir el pop-up directamente
-        terminales_con_foto = df_mostrar[df_mostrar['URL'] != '-']
-        if not terminales_con_foto.empty:
-            col_pop1, col_pop2 = st.columns([3, 1])
-            with col_pop1:
-                opciones_modal = {
-                    f"Terminal {r['Terminal']} - Sup: {r['Supervisor']} ({r['Regional']})": r 
-                    for _, r in terminales_con_foto.iterrows()
-                }
-                term_elegido_txt = st.selectbox(
-                    "👁️ Selecciona un terminal para abrir evidencia en pantalla emergente:",
-                    options=list(opciones_modal.keys()),
-                    key="sel_modal_terminal_pozo"
+        # TABLA CON LINKCOLUMN DIRECTO: al hacer clic en "👁️ Ver Foto", abre la URL de inmediato
+        st.dataframe(
+            df_mostrar,
+            use_container_width=True,
+            height=380,
+            hide_index=True,
+            column_config={
+                "Evidencia": st.column_config.LinkColumn(
+                    "Evidencia",
+                    help="Haz clic para ver la fotografía de la encuesta",
+                    validate=r"^https?://.*",
+                    display_text="👁️ Ver Foto"
                 )
-            with col_pop2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("👁️ Ver Pop-up", type="primary", use_container_width=True, key="btn_ver_popup_directo"):
-                    r_sel = opciones_modal[term_elegido_txt]
-                    abrir_modal_foto(
-                        terminal=r_sel['Terminal'],
-                        regional=r_sel['Regional'],
-                        supervisor=r_sel['Supervisor'],
-                        estado=r_sel['Estado'],
-                        url=r_sel['URL']
-                    )
-
-        st.caption("💡 **Tip:** Haz clic sobre cualquier fila de la tabla para abrir automáticamente su fotografía en la ventana emergente.")
-
-        # Tabla interactiva: al hacer clic en la fila se abre el pop-up
-        try:
-            event = st.dataframe(
-                df_mostrar[['Regional', 'Supervisor', 'Terminal', 'Estado', 'Evidencia']],
-                use_container_width=True,
-                height=340,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                key="df_alertas_interactivo"
-            )
-            if event and hasattr(event, "selection") and event.selection.rows:
-                selected_idx = event.selection.rows[0]
-                fila_sel = df_mostrar.iloc[selected_idx]
-                if fila_sel['URL'] != '-':
-                    abrir_modal_foto(
-                        terminal=fila_sel['Terminal'],
-                        regional=fila_sel['Regional'],
-                        supervisor=fila_sel['Supervisor'],
-                        estado=fila_sel['Estado'],
-                        url=fila_sel['URL']
-                    )
-                else:
-                    st.info(f"ℹ️ El terminal {fila_sel['Terminal']} figura como '{fila_sel['Estado']}' (sin fotografía registrada).")
-        except TypeError:
-            # Respaldo si la versión de Streamlit no soporta on_select
-            st.dataframe(
-                df_mostrar[['Regional', 'Supervisor', 'Terminal', 'Estado', 'Evidencia']],
-                use_container_width=True,
-                height=340,
-                hide_index=True
-            )
+            }
+        )
 
         # Botón para gestión en WhatsApp
         if st.button("📋 Copiar Pendientes de Pozo para WhatsApp", key="btn_wsp_pozo"):
             lineas = [
-                f"Terminal: {r['Terminal']} | Reg: {r['Regional']} | Sup: {r['Supervisor']} | Estado: {r['Estado']}" + (f" | Foto: {r['URL']}" if r['URL'] != '-' else "")
+                f"Terminal: {r['Terminal']} | Reg: {r['Regional']} | Sup: {r['Supervisor']} | Estado: {r['Estado']}" + (f" | Foto: {r['Evidencia']}" if pd.notna(r['Evidencia']) else "")
                 for _, r in df_mostrar.iterrows()
             ]
             st.code("\n".join(lineas), language=None)
