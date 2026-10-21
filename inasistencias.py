@@ -3,6 +3,17 @@ import pandas as pd
 import plotly.express as px
 from google import genai
 
+def ordenar_conferencias(conferencias):
+    if not conferencias:
+        return []
+    df_temp = pd.DataFrame({'conf': list(conferencias)})
+    fechas = df_temp['conf'].astype(str).str.extract(r'(\d{2})/(\d{2})')
+    if not fechas.isna().all().all():
+        df_temp['sort_key'] = fechas[1].fillna('00') + "-" + fechas[0].fillna('00')
+        df_temp = df_temp.sort_values('sort_key')
+        return df_temp['conf'].tolist()
+    return list(conferencias)
+
 def mostrar_modulo(api_key, bytes_excel):
     st.title("🎯 Control de Inasistencia Conferencia Carlos Mazzetti")
     
@@ -11,44 +22,54 @@ def mostrar_modulo(api_key, bytes_excel):
         return
         
     try:
-        # Lee la primera pestaña del archivo Excel cargado
         df_inas = pd.read_excel(bytes_excel)
     except Exception:
         st.error("⚠️ Error al procesar la información de Inasistencias.")
         return
 
-    # --- CAPA DE COMPATIBILIDAD CON NUEVO FORMATO DE EXCEL ---
-    df_inas.columns = [str(c).strip() for c in df_inas.columns]
+    # --- NORMALIZACIÓN DE CABECERAS ---
+    col_map = {c: str(c).strip() for c in df_inas.columns}
+    df_inas = df_inas.rename(columns=col_map)
 
     # 1. Compatibilidad de nombres de terminal (TERMINAL vs username)
     if 'TERMINAL' in df_inas.columns and 'username' not in df_inas.columns:
         df_inas['username'] = df_inas['TERMINAL']
 
     # 2. Compatibilidad de Supervisor (Jerarquia_Dinamica)
-    col_jer = [c for c in df_inas.columns if 'jerarquia' in c.lower()]
+    col_jer = [c for c in df_inas.columns if 'jerarquia' in str(c).lower()]
     if col_jer and 'Jerarquia_Dinamica' not in df_inas.columns:
         df_inas['Jerarquia_Dinamica'] = df_inas[col_jer[0]]
 
-    # 3. Compatibilidad de AGENTE (si la columna no está en la nueva base, no rompe la app)
+    # 3. Compatibilidad de AGENTE
     if 'AGENTE' not in df_inas.columns:
         df_inas['AGENTE'] = df_inas.get('username', '')
 
-    # 4. FILTRAR SOLO INASISTENCIAS = 1 (Ignorando asistencia = 1 / inasistencia = 0)
-    col_inas_list = [c for c in df_inas.columns if c.lower() == 'inasistencia']
+    # 4. FILTRO ESTRICTO DE INASISTENCIAS (Ignora los que asistieron = 0)
+    col_inas_list = [c for c in df_inas.columns if 'inasist' in str(c).lower()]
     if col_inas_list:
         col_i = col_inas_list[0]
-        df_inas = df_inas[pd.to_numeric(df_inas[col_i], errors='coerce') == 1].copy()
+        vals = pd.to_numeric(df_inas[col_i], errors='coerce')
+        if (vals == 0).any():
+            df_inas = df_inas[vals == 1].copy()
+    else:
+        # Respaldo: si existe la columna asistencia, toma las inasistencias (asistencia == 0)
+        col_asist_list = [c for c in df_inas.columns if str(c).lower() == 'asistencia']
+        if col_asist_list:
+            vals_asist = pd.to_numeric(df_inas[col_asist_list[0]], errors='coerce')
+            if (vals_asist == 0).any():
+                df_inas = df_inas[vals_asist == 0].copy()
 
-    # 5. Normalización de formato de texto y limpieza de espacios
+    # 5. Limpieza de texto y espacios en terminales y conferencias
     if 'username' in df_inas.columns:
         df_inas['username'] = df_inas['username'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     if 'post_titulo' in df_inas.columns:
         df_inas['post_titulo'] = df_inas['post_titulo'].astype(str).str.strip()
 
-    # OBTENER CONFERENCIAS EN ORDEN (Más reciente primero)
+    # ORDENAR CONFERENCIAS CRONOLÓGICAMENTE
     if 'post_titulo' in df_inas.columns:
-        conf_unicas = df_inas['post_titulo'].dropna().unique().tolist()
-        conf_list = conf_unicas[::-1]
+        confs_unicas = df_inas['post_titulo'].dropna().unique().tolist()
+        confs_ordenadas = ordenar_conferencias(confs_unicas)
+        conf_list = confs_ordenadas[::-1]  # La más reciente primero en el desplegable
     else:
         conf_list = []
 
@@ -243,7 +264,7 @@ def mostrar_modulo(api_key, bytes_excel):
     if selected_continuas and 'Cantidad de Inasistencias continuas' in df_tabla.columns:
         df_tabla = df_tabla[df_tabla['Cantidad de Inasistencias continuas'].isin(selected_continuas)]
 
-    # OCULTAR COLUMNAS NO DESEADAS (SE INCLUYEN LAS NUEVAS COLUMNAS)
+    # OCULTAR COLUMNAS INTERNAS
     cols_a_eliminar = [
         'post_titulo', 'post Titulo', 'TERRITORIAL', 
         'Terminales pendientes', 'Terminales Pendientes',
