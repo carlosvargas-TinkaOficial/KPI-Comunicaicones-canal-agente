@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import re
 
 # --- FUNCIÓN DE LIMPIEZA Y CORRECCIÓN DE URLs (.jpe -> .jpeg) ---
@@ -9,7 +10,6 @@ def limpiar_url_evidencia(url):
     url_str = str(url).strip()
     if url_str == "" or url_str.lower() in ["nan", "none", "-", "null"]:
         return None
-    # Reemplaza .jpe por .jpeg de forma segura al final o antes de parámetros ?token=
     url_str = re.sub(r'\.jpe(?=[?#]|$)', '.jpeg', url_str, flags=re.IGNORECASE)
     return url_str
 
@@ -58,7 +58,7 @@ def ordenar_base_pozos_cronologicamente(df):
     dt_series = pd.to_datetime(f_norm + ' ' + h_norm, errors='coerce')
     df['_FECHA_HORA_ORDEN'] = dt_series
     
-    # Se ordena de menor a mayor para que la última subida quede siempre al final (iloc[-1])
+    # Orden ascendente para que la última subida quede siempre al final (iloc[-1])
     df = df.sort_values(by=['_FECHA_HORA_ORDEN'], ascending=True).reset_index(drop=True)
     return df
 
@@ -79,7 +79,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         st.error(f"⚠️ Error al leer los archivos: {e}")
         return
 
-    # --- 1. PREPARACIÓN DEL DIRECTORIO BASE DE PUNTOS OBJETIVO (INASISTENCIAS) ---
+    # --- 1. PREPARACIÓN DEL DIRECTORIO BASE DE PUNTOS OBJETIVO ---
     df_inas = df_inas_raw.rename(columns={c: str(c).strip() for c in df_inas_raw.columns})
     col_term_inas = 'TERMINAL' if 'TERMINAL' in df_inas.columns else ('username' if 'username' in df_inas.columns else None)
     if not col_term_inas:
@@ -87,11 +87,11 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         return
 
     df_inas['TERMINAL_CLEAN'] = df_inas[col_term_inas].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-    col_reg = next((c for c in df_inas.columns if any(w in c.lower() for w in ['territorial', 'regional'])), 'TERRITORIAL')
+    col_terr = next((c for c in df_inas.columns if any(w in c.lower() for w in ['territorial', 'regional'])), 'TERRITORIAL')
     col_sup = next((c for c in df_inas.columns if 'jerarquia' in c.lower() or 'supervisor' in c.lower()), 'Jerarquia_Dinamica')
     
-    df_universo = df_inas[['TERMINAL_CLEAN', col_reg, col_sup]].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
-    df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_reg: 'Regional', col_sup: 'Supervisor'})
+    df_universo = df_inas[['TERMINAL_CLEAN', col_terr, col_sup]].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
+    df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_terr: 'Territorial', col_sup: 'Regional / supervisor'})
 
     # --- 2. FILTRADO, LIMPIEZA Y ORDENAMIENTO POR FECHA/HORA DE DATA_POZOS ---
     df_p = df_pozos_raw.rename(columns={c: str(c).strip() for c in df_pozos_raw.columns})
@@ -101,10 +101,9 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         return
     df_p['TERMINAL'] = df_p[col_term_p].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
-    # Identificar columna de URL / Evidencia
     col_url = next((c for c in df_p.columns if any(w in str(c).lower() for w in ['url', 'link', 'foto', 'image', 'imagen', 'evidencia'])), None)
 
-    # Ordenar por FECHA y HORA para asegurar que la última foto subida sea la seleccionada
+    # Ordenar por FECHA y HORA
     df_p = ordenar_base_pozos_cronologicamente(df_p)
 
     # Formularios válidos con 'POZO' y sin 'NL'
@@ -123,19 +122,22 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         return
 
     formularios_ordenados = ordenar_formularios_por_fecha(formularios_validos)
+    forms_dropdown = ["Todos"] + formularios_ordenados[::-1]
 
-    # --- 3. FILTROS GENERALES SUPERIORES (REGIONAL Y SUPERVISOR) ---
-    col_f1, col_f2 = st.columns(2)
+    # --- 3. FILTROS PRINCIPALES SUPERIORES ---
+    col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
-        regionales = ["Todos"] + sorted(df_universo['Regional'].dropna().unique().tolist())
-        selected_reg = st.selectbox("🎯 1. Regional:", regionales)
-
-    df_u_reg = df_universo if selected_reg == "Todos" else df_universo[df_universo['Regional'] == selected_reg]
+        selected_form = st.selectbox("📋 1. Formulario:", forms_dropdown, index=0)
     with col_f2:
-        supervisores = ["Todos"] + sorted(df_u_reg['Supervisor'].dropna().unique().tolist())
-        selected_sup = st.selectbox("👔 2. Supervisor:", supervisores)
+        territoriales = ["Todos"] + sorted(df_universo['Territorial'].dropna().unique().tolist())
+        selected_terr = st.selectbox("🎯 2. Territorial:", territoriales)
 
-    df_objetivo_filtrado = df_u_reg if selected_sup == "Todos" else df_u_reg[df_u_reg['Supervisor'] == selected_sup]
+    df_u_terr = df_universo if selected_terr == "Todos" else df_universo[df_universo['Territorial'] == selected_terr]
+    with col_f3:
+        supervisores = ["Todos"] + sorted(df_u_terr['Regional / supervisor'].dropna().unique().tolist())
+        selected_sup = st.selectbox("👔 3. Regional / supervisor:", supervisores)
+
+    df_objetivo_filtrado = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
 
     # --- 4. FUNCIÓN EVALUADORA POR FORMULARIO (ÚLTIMA FOTO SUBIDA) ---
     def evaluar_formulario(form_name, base_objetivo):
@@ -144,8 +146,8 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         
         for _, row in base_objetivo.iterrows():
             term = row['TERMINAL']
-            reg = row['Regional']
-            sup = row['Supervisor']
+            terr = row['Territorial']
+            sup = row['Regional / supervisor']
             
             puntos_term = df_sub[df_sub['TERMINAL'] == term]
             num_intentos = len(puntos_term)
@@ -159,7 +161,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                 tiene_match = any('match' == r for r in resultados)
                 tiene_no_match = any('no_match' == r for r in resultados)
                 
-                # Extraer la última foto válida en orden cronológico ascendente (último intento subido)
                 url_val = None
                 if col_url:
                     fotos_validas = puntos_term[
@@ -175,15 +176,15 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                         estado = "True - 1er intento"
                     else:
                         estado = "True - Segundo intento"
-                    url_val = None  # Solo los no comprobados muestran fotografía
+                    url_val = None
                     intentos_val = num_intentos
                 else:
                     estado = "No comprobado"
                     intentos_val = num_intentos
 
             registros.append({
-                'Regional': reg,
-                'Supervisor': sup,
+                'Territorial': terr,
+                'Regional / supervisor': sup,
                 'Terminal': term,
                 'Estado': estado,
                 'Intentos': intentos_val,
@@ -191,9 +192,12 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
             })
         return pd.DataFrame(registros)
 
-    # --- 5. CUADROS EVOLUTIVOS (CANTIDADES Y PORCENTAJES) ---
+    # --- 5. CUADROS EVOLUTIVOS (FILTRADOS SEGÚN EL FORMULARIO SELECCIONADO) ---
+    # Si se selecciona un formulario específico, solo se muestra esa columna en el evolutivo
+    formularios_a_mostrar = [selected_form] if selected_form != "Todos" else formularios_ordenados
+
     datos_evolutivo = {}
-    for form in formularios_ordenados:
+    for form in formularios_a_mostrar:
         df_eval = evaluar_formulario(form, df_objetivo_filtrado)
         
         tot_pts = len(df_eval)
@@ -233,7 +237,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                 <tr style="background-color: #FFFFFF;">
                     <th style="padding: 10px 14px; position: sticky; left: 0; z-index: 3; background-color: #FFFFFF; min-width: 175px; max-width: 175px; border-bottom: 2px solid #ccc; box-shadow: 3px 0 5px -2px rgba(0,0,0,0.15);"></th>
         """
-        for f in formularios_ordenados:
+        for f in formularios_a_mostrar:
             html += f'<th style="padding: 10px 14px; text-align: center; color: #000000; font-weight: 800; font-size: 14px; min-width: 110px; border-bottom: 2px solid #ccc; white-space: nowrap;">{f}</th>'
         html += "</tr></thead><tbody>"
 
@@ -254,7 +258,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
             html += f'<tr style="background-color: {bg_color}; color: {text_color}; font-weight: {font_weight};">'
             html += f'<td style="padding: 8px 14px; text-align: left; position: sticky; left: 0; z-index: 2; background-color: {bg_color}; color: {text_color}; font-weight: {font_weight}; min-width: 175px; max-width: 175px; border-bottom: 1px solid #E6E6E6; box-shadow: 3px 0 5px -2px rgba(0,0,0,0.15);">{label}</td>'
             
-            for f in formularios_ordenados:
+            for f in formularios_a_mostrar:
                 val = datos_evolutivo[f][idx]
                 tot = datos_evolutivo[f][0]
                 if es_porcentaje:
@@ -267,55 +271,161 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         html += "</tbody></table></div>"
         return html
 
-    # CUADRO 1: CANTIDADES
     st.subheader("📊 Evolutivo de la Encuesta")
     st.markdown(renderizar_tabla_html(es_porcentaje=False), unsafe_allow_html=True)
 
-    # CUADRO 2: PORCENTAJES
     st.subheader("📈 Evolutivo de la Encuesta (%)")
     st.markdown(renderizar_tabla_html(es_porcentaje=True), unsafe_allow_html=True)
 
     st.divider()
 
-    # --- 6. CUADRO 3: ALERTAS Y PENDIENTES CON FILTRO DE FORMULARIO Y ESTADO ---
-    st.subheader("⚠️ Alertas y Pendientes")
+    # --- 6. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
+    # Preparar datos para los gráficos basados en los formularios en evaluación
+    form_eval_graficos = [selected_form] if selected_form != "Todos" else formularios_ordenados
+    dfs_graficos = []
+    for f_name in form_eval_graficos:
+        df_temp = evaluar_formulario(f_name, df_objetivo_filtrado)
+        df_temp['Formulario'] = f_name
+        dfs_graficos.append(df_temp)
+    df_eval_total = pd.concat(dfs_graficos, ignore_index=True) if dfs_graficos else pd.DataFrame()
 
-    # FILTROS INTEGRADOS DIRECTAMENTE EN LA SECCIÓN
-    col_al1, col_al2 = st.columns(2)
-    with col_al1:
-        filtro_form = st.selectbox(
-            "📋 Filtrar por Formulario:",
-            ["Todos"] + formularios_ordenados[::-1],
-            index=0,
-            key="f_form_alertas"
-        )
-    with col_al2:
-        filtro_estado = st.selectbox(
-            "🔍 Filtrar por Estado:",
-            ["Todos", "No comprobado", "Sin respuesta"],
-            index=0,
-            key="f_estado_alertas"
-        )
+    st.subheader("📊 Análisis de Desempeño y Cobertura")
 
-    # EVALUACIÓN DE FORMULARIOS SEGÚN EL FILTRO SELECCIONADO
-    if filtro_form == "Todos":
-        dfs_alertas = []
-        for f_name in formularios_ordenados[::-1]:
-            df_eval_f = evaluar_formulario(f_name, df_objetivo_filtrado)
-            df_eval_f['Formulario'] = f_name
-            dfs_alertas.append(df_eval_f)
-        df_activo = pd.concat(dfs_alertas, ignore_index=True) if dfs_alertas else pd.DataFrame()
-    else:
-        df_activo = evaluar_formulario(filtro_form, df_objetivo_filtrado)
-        df_activo['Formulario'] = filtro_form
+    # Selector de vista con botones táctiles
+    modo_metrica = st.radio(
+        "Selecciona la métrica a visualizar:",
+        ["Pendientes", "Cumplimiento"],
+        horizontal=True,
+        key="radio_modo_analisis"
+    )
 
-    df_alertas_base = df_activo[df_activo['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
+    plotly_config = {'scrollZoom': False, 'displayModeBar': False, 'doubleClick': 'reset'}
 
+    col_g1, col_g2 = st.columns(2)
+
+    with col_g1:
+        st.markdown("#### 📍 Análisis según territorial")
+        if not df_eval_total.empty:
+            if modo_metrica == "Pendientes":
+                df_terr_pend = df_eval_total[df_eval_total['Estado'].isin(['No comprobado', 'Sin respuesta'])]
+                if not df_terr_pend.empty:
+                    df_t_grp = df_terr_pend.groupby(['Territorial', 'Estado']).size().reset_index(name='Cantidad')
+                    fig_terr = px.bar(
+                        df_t_grp, 
+                        y='Territorial', 
+                        x='Cantidad', 
+                        color='Estado',
+                        orientation='h',
+                        barmode='stack',
+                        color_discrete_map={'No comprobado': '#FF6700', 'Sin respuesta': '#D9381E'},
+                        text='Cantidad'
+                    )
+                    fig_terr.update_traces(textposition='inside', insidetextanchor='middle')
+                    fig_terr.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title="Pozo No Comprobado", yaxis_title="",
+                        legend_title="", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    st.plotly_chart(fig_terr, use_container_width=True, config=plotly_config)
+                else:
+                    st.success("🎉 No hay pendientes registrados en Territorial.")
+            else:
+                # Cumplimiento
+                df_t_tot = df_eval_total.groupby('Territorial').agg(
+                    Total=('Terminal', 'count'),
+                    Comprobados=('Estado', lambda x: x.str.contains('True').sum())
+                ).reset_index()
+                df_t_tot['% Cumplimiento'] = (df_t_tot['Comprobados'] / df_t_tot['Total'] * 100).round(1)
+                df_t_tot = df_t_tot.sort_values('% Cumplimiento', ascending=True)
+
+                fig_terr = px.bar(
+                    df_t_tot,
+                    y='Territorial',
+                    x='% Cumplimiento',
+                    orientation='h',
+                    text=df_t_tot['% Cumplimiento'].apply(lambda x: f"{x:.1f}%"),
+                    color_discrete_sequence=['#096045']
+                )
+                fig_terr.update_traces(textposition='outside')
+                fig_terr.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis_title="% de Cumplimiento", yaxis_title="",
+                    xaxis=dict(range=[0, 115])
+                )
+                st.plotly_chart(fig_terr, use_container_width=True, config=plotly_config)
+
+    with col_g2:
+        st.markdown("#### 👤 Análisis según regional")
+        if not df_eval_total.empty:
+            if modo_metrica == "Pendientes":
+                df_sup_pend = df_eval_total[df_eval_total['Estado'].isin(['No comprobado', 'Sin respuesta'])]
+                if not df_sup_pend.empty:
+                    df_s_grp = df_sup_pend.groupby(['Regional / supervisor', 'Estado']).size().reset_index(name='Cantidad')
+                    fig_sup = px.bar(
+                        df_s_grp, 
+                        y='Regional / supervisor', 
+                        x='Cantidad', 
+                        color='Estado',
+                        orientation='h',
+                        barmode='stack',
+                        color_discrete_map={'No comprobado': '#FF6700', 'Sin respuesta': '#D9381E'},
+                        text='Cantidad'
+                    )
+                    fig_sup.update_traces(textposition='inside', insidetextanchor='middle')
+                    fig_sup.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title="Pozo No Comprobado", yaxis_title="",
+                        legend_title="", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    st.plotly_chart(fig_sup, use_container_width=True, config=plotly_config)
+                else:
+                    st.success("🎉 No hay pendientes registrados en Regional / supervisor.")
+            else:
+                # Cumplimiento
+                df_s_tot = df_eval_total.groupby('Regional / supervisor').agg(
+                    Total=('Terminal', 'count'),
+                    Comprobados=('Estado', lambda x: x.str.contains('True').sum())
+                ).reset_index()
+                df_s_tot['% Cumplimiento'] = (df_s_tot['Comprobados'] / df_s_tot['Total'] * 100).round(1)
+                df_s_tot = df_s_tot.sort_values('% Cumplimiento', ascending=True)
+
+                fig_sup = px.bar(
+                    df_s_tot,
+                    y='Regional / supervisor',
+                    x='% Cumplimiento',
+                    orientation='h',
+                    text=df_s_tot['% Cumplimiento'].apply(lambda x: f"{x:.1f}%"),
+                    color_discrete_sequence=['#096045']
+                )
+                fig_sup.update_traces(textposition='outside')
+                fig_sup.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis_title="% de Cumplimiento", yaxis_title="",
+                    xaxis=dict(range=[0, 115])
+                )
+                st.plotly_chart(fig_sup, use_container_width=True, config=plotly_config)
+
+    st.divider()
+
+    # --- 7. CUADRO: ALERTAS Y PENDIENTES ---
+    titulo_alertas = f"⚠️ Alertas y Pendientes ({selected_form})" if selected_form != "Todos" else "⚠️ Alertas y Pendientes (Consolidado)"
+    st.subheader(titulo_alertas)
+
+    # Filtrar solo casos no comprobados o sin respuesta
+    df_alertas_base = df_eval_total[df_eval_total['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
+
+    filtro_estado = st.selectbox(
+        "🔍 Filtrar por Estado:",
+        ["Todos", "No comprobado", "Sin respuesta"],
+        index=0,
+        key="f_estado_alertas"
+    )
+    
     df_alertas = df_alertas_base.copy()
     if filtro_estado != "Todos":
         df_alertas = df_alertas[df_alertas['Estado'] == filtro_estado]
 
-    cols_orden = ['Formulario', 'Regional', 'Supervisor', 'Terminal', 'Estado', 'Intentos', 'Evidencia']
+    cols_orden = ['Formulario', 'Territorial', 'Regional / supervisor', 'Terminal', 'Estado', 'Intentos', 'Evidencia']
     df_mostrar = df_alertas[[c for c in cols_orden if c in df_alertas.columns]]
 
     if df_mostrar.empty:
@@ -343,7 +453,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
 
         if st.button("📋 Copiar Pendientes de Pozo para WhatsApp", key="btn_wsp_pozo"):
             lineas = [
-                f"Form: {r['Formulario']} | Term: {r['Terminal']} | Reg: {r['Regional']} | Sup: {r['Supervisor']} | Estado: {r['Estado']} | Intentos: {r['Intentos']}" + (f" | Foto: {r['Evidencia']}" if pd.notna(r['Evidencia']) else "")
+                f"Form: {r['Formulario']} | Term: {r['Terminal']} | Terr: {r['Territorial']} | Sup: {r['Regional / supervisor']} | Estado: {r['Estado']} | Intentos: {r['Intentos']}" + (f" | Foto: {r['Evidencia']}" if pd.notna(r['Evidencia']) else "")
                 for _, r in df_mostrar.iterrows()
             ]
             st.code("\n".join(lineas), language=None)
