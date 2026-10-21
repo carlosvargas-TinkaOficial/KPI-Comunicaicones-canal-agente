@@ -4,10 +4,15 @@ import requests
 import io
 import time
 import hmac
+import importlib
 
 # Importación de módulos independientes
 import inasistencias
 import pozos
+
+# Forzar recarga dinámica de submódulos
+importlib.reload(inasistencias)
+importlib.reload(pozos)
 
 st.set_page_config(page_title="La Tinka - Portal Canal Agente", layout="wide", initial_sidebar_state="expanded")
 
@@ -25,7 +30,6 @@ st.markdown("""
     li[role="option"]:hover, li[role="option"][aria-selected="true"] { background-color: #F5F0D4 !important; }
     li[role="option"]:hover *, li[role="option"][aria-selected="true"] * { color: #096045 !important; background-color: #F5F0D4 !important; font-weight: bold !important; }
     
-    /* Botones de navegación tipo Tarjeta Táctil para Celulares */
     div[data-testid="stRadio"] > label { font-weight: bold !important; color: #096045 !important; font-size: 1.1rem !important; }
     div[data-testid="stRadio"] div[role="radiogroup"] > label {
         background-color: #FFFFFF !important;
@@ -54,8 +58,8 @@ st.markdown("""
 # --- CONFIGURACIÓN DE SEGURIDAD Y TIEMPOS ---
 PASSWORD_CORRECTA = st.secrets.get("APP_PASSWORD", "Tinka123")
 MAX_INTENTOS = 3
-TIEMPO_BLOQUEO_SEG = 300          # 5 minutos de bloqueo tras 3 fallos
-TIEMPO_INACTIVIDAD_SEG = 3600      # 60 minutos de inactividad máxima
+TIEMPO_BLOQUEO_SEG = 300
+TIEMPO_INACTIVIDAD_SEG = 3600
 
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
@@ -66,7 +70,7 @@ if "tiempo_bloqueo" not in st.session_state:
 if "ultimo_acceso" not in st.session_state:
     st.session_state["ultimo_acceso"] = time.time()
 
-# --- CONTROL DE INACTIVIDAD DE SESIÓN ---
+# --- CONTROL DE INACTIVIDAD ---
 if st.session_state["autenticado"]:
     tiempo_transcurrido = time.time() - st.session_state["ultimo_acceso"]
     if tiempo_transcurrido > TIEMPO_INACTIVIDAD_SEG:
@@ -76,7 +80,7 @@ if st.session_state["autenticado"]:
     else:
         st.session_state["ultimo_acceso"] = time.time()
 
-# --- PANTALLA DE CONTROL DE ACCESO CON RATE LIMITING ---
+# --- CONTROL DE ACCESO ---
 if not st.session_state["autenticado"]:
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
@@ -90,7 +94,7 @@ if not st.session_state["autenticado"]:
         tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time()
         if tiempo_restante > 0:
             mins_restantes = int(tiempo_restante // 60) + 1
-            st.error(f"🚫 Demasiados intentos fallidos. Acceso bloqueado temporalmente por {mins_restantes} minuto(s).")
+            st.error(f"🚫 Acceso bloqueado temporalmente por {mins_restantes} minuto(s).")
             st.stop()
 
         clave_ingresada = st.text_input("Contraseña de Acceso:", type="password", key="pwd_input")
@@ -105,16 +109,15 @@ if not st.session_state["autenticado"]:
             else:
                 st.session_state["intentos_fallidos"] += 1
                 intentos_restantes = MAX_INTENTOS - st.session_state["intentos_fallidos"]
-                
                 if st.session_state["intentos_fallidos"] >= MAX_INTENTOS:
                     st.session_state["tiempo_bloqueo"] = time.time() + TIEMPO_BLOQUEO_SEG
-                    st.error("🚫 Excediste el número de intentos permitidos. Pantalla bloqueada por 5 minutos.")
+                    st.error("🚫 Excediste los intentos permitidos. Bloqueado por 5 minutos.")
                     st.rerun()
                 else:
-                    st.error(f"🔑 Contraseña incorrecta. Te quedan {intentos_restantes} intento(s) antes del bloqueo.")
+                    st.error(f"🔑 Contraseña incorrecta. Te quedan {intentos_restantes} intento(s).")
     st.stop()
 
-# --- AUTENTICACIÓN Y CONFIGURACIÓN DE MÓDULOS ---
+# --- CARGA DE SECRETS ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 url_inas = st.secrets.get("URL_INASISTENCIAS", None)
 url_pozos = st.secrets.get("URL_POZOS", None)
@@ -123,7 +126,6 @@ st.sidebar.title("📌 Canal Agente")
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=180)
 
-# SELECTOR MODULAR TÁCTIL
 modulo_seleccionado = st.sidebar.radio(
     "Selecciona la Herramienta:",
     [
@@ -135,7 +137,6 @@ modulo_seleccionado = st.sidebar.radio(
 st.sidebar.divider()
 st.sidebar.header("⚙️ Configuración")
 
-# Botón para forzar la actualización de datos desde Google Drive
 if st.sidebar.button("🔄 Recargar Datos de Drive"):
     st.cache_data.clear()
     st.success("Caché limpiada. Cargando datos frescos...")
@@ -149,7 +150,7 @@ if st.sidebar.button("🔒 Cerrar Sesión"):
     st.session_state["autenticado"] = False
     st.rerun()
 
-# --- FUNCIÓN DE CARGA BLINDADA SILENCIOSA CON CACHE BUSTING ---
+# --- CARGA DE DATOS ---
 @st.cache_data(ttl=60)
 def cargar_excel_drive(url):
     if not url:
@@ -162,7 +163,7 @@ def cargar_excel_drive(url):
     except Exception:
         return None
 
-# --- ENRUTADOR PRINCIPAL ---
+# --- ENRUTADOR ---
 if "Inasistencias" in modulo_seleccionado:
     bytes_m1 = cargar_excel_drive(url_inas)
     inasistencias.mostrar_modulo(api_key, bytes_m1)
