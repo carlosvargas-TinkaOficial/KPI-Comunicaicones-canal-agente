@@ -7,10 +7,11 @@ import hmac
 
 # Importación de módulos independientes
 import inasistencias
+import pozos
 
 st.set_page_config(page_title="La Tinka - Portal Canal Agente", layout="wide", initial_sidebar_state="expanded")
 
-# --- INYECCIÓN CSS: IDENTIDAD CORPORATIVA ---
+# --- INYECCIÓN CSS: IDENTIDAD CORPORATIVA Y BOTONES TÁCTILES ---
 st.markdown("""
 <style>
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background-color: #F5F0D4 !important; color: #000000 !important; }
@@ -23,6 +24,22 @@ st.markdown("""
     li[role="option"] * { color: #000000 !important; background-color: #FFFFFF !important; }
     li[role="option"]:hover, li[role="option"][aria-selected="true"] { background-color: #F5F0D4 !important; }
     li[role="option"]:hover *, li[role="option"][aria-selected="true"] * { color: #096045 !important; background-color: #F5F0D4 !important; font-weight: bold !important; }
+    
+    /* Botones de navegación tipo Tarjeta Táctil para Celulares */
+    div[data-testid="stRadio"] > label { font-weight: bold !important; color: #096045 !important; font-size: 1.1rem !important; }
+    div[data-testid="stRadio"] div[role="radiogroup"] > label {
+        background-color: #FFFFFF !important;
+        padding: 12px 14px !important;
+        border-radius: 10px !important;
+        border: 2px solid #096045 !important;
+        margin-bottom: 8px !important;
+        width: 100% !important;
+        box-shadow: 0px 2px 4px rgba(0,0,0,0.06);
+    }
+    div[data-testid="stRadio"] div[role="radiogroup"] > label:hover {
+        background-color: #F5F0D4 !important;
+    }
+
     [data-testid="stMetric"] { background-color: #FFFFFF !important; padding: 12px 16px !important; border-radius: 10px !important; border-left: 6px solid #096045 !important; box-shadow: 0px 2px 6px rgba(0,0,0,0.08); }
     [data-testid="stMetricLabel"] p { color: #096045 !important; font-weight: bold !important; }
     [data-testid="stMetricValue"] div { color: #000000 !important; font-weight: 800 !important; }
@@ -35,7 +52,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- CONFIGURACIÓN DE SEGURIDAD Y TIEMPOS ---
-PASSWORD_CORRECTA = st.secrets.get("APP_PASSWORD", "Tinka2026*")
+PASSWORD_CORRECTA = st.secrets.get("APP_PASSWORD", "Tinka123")
 MAX_INTENTOS = 3
 TIEMPO_BLOQUEO_SEG = 300          # 5 minutos de bloqueo tras 3 fallos
 TIEMPO_INACTIVIDAD_SEG = 3600      # 60 minutos de inactividad máxima
@@ -100,12 +117,20 @@ if not st.session_state["autenticado"]:
 # --- AUTENTICACIÓN Y CONFIGURACIÓN DE MÓDULOS ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 url_inas = st.secrets.get("URL_INASISTENCIAS", None)
+url_pozos = st.secrets.get("URL_POZOS", None)
 
 st.sidebar.title("📌 Canal Agente")
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=180)
 
-st.sidebar.info("🎯 **Herramienta:** Copiloto IA (Inasistencias)")
+# SELECTOR MODULAR TÁCTIL
+modulo_seleccionado = st.sidebar.radio(
+    "Selecciona la Herramienta:",
+    [
+        "🎯 1. Copiloto IA (Inasistencias)",
+        "🎱 2. Resultado Encuesta de Pozo"
+    ]
+)
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Configuración")
@@ -137,6 +162,12 @@ def cargar_excel_drive(url):
     except Exception:
         return None
 
-# --- CARGA DIRECTA DEL MÓDULO DE INASISTENCIAS ---
-bytes_m1 = cargar_excel_drive(url_inas)
-inasistencias.mostrar_modulo(api_key, bytes_m1)
+# --- ENRUTADOR PRINCIPAL ---
+if "Inasistencias" in modulo_seleccionado:
+    bytes_m1 = cargar_excel_drive(url_inas)
+    inasistencias.mostrar_modulo(api_key, bytes_m1)
+
+elif "Resultado Encuesta de Pozo" in modulo_seleccionado:
+    bytes_pozos = cargar_excel_drive(url_pozos)
+    bytes_inas = cargar_excel_drive(url_inas)
+    pozos.mostrar_modulo(api_key, bytes_pozos, bytes_inas)
