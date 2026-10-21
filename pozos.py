@@ -58,7 +58,7 @@ def ordenar_base_pozos_cronologicamente(df):
     dt_series = pd.to_datetime(f_norm + ' ' + h_norm, errors='coerce')
     df['_FECHA_HORA_ORDEN'] = dt_series
     
-    # Orden ascendente para que la última subida quede siempre al final (iloc[-1])
+    # Orden ascendente: la última subida queda al final (iloc[-1])
     df = df.sort_values(by=['_FECHA_HORA_ORDEN'], ascending=True).reset_index(drop=True)
     return df
 
@@ -193,7 +193,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         return pd.DataFrame(registros)
 
     # --- 5. CUADROS EVOLUTIVOS (FILTRADOS SEGÚN EL FORMULARIO SELECCIONADO) ---
-    # Si se selecciona un formulario específico, solo se muestra esa columna en el evolutivo
     formularios_a_mostrar = [selected_form] if selected_form != "Todos" else formularios_ordenados
 
     datos_evolutivo = {}
@@ -280,7 +279,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
     st.divider()
 
     # --- 6. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
-    # Preparar datos para los gráficos basados en los formularios en evaluación
     form_eval_graficos = [selected_form] if selected_form != "Todos" else formularios_ordenados
     dfs_graficos = []
     for f_name in form_eval_graficos:
@@ -291,7 +289,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
 
     st.subheader("📊 Análisis de Desempeño y Cobertura")
 
-    # Selector de vista con botones táctiles
     modo_metrica = st.radio(
         "Selecciona la métrica a visualizar:",
         ["Pendientes", "Cumplimiento"],
@@ -330,7 +327,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                 else:
                     st.success("🎉 No hay pendientes registrados en Territorial.")
             else:
-                # Cumplimiento
                 df_t_tot = df_eval_total.groupby('Territorial').agg(
                     Total=('Terminal', 'count'),
                     Comprobados=('Estado', lambda x: x.str.contains('True').sum())
@@ -381,7 +377,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
                 else:
                     st.success("🎉 No hay pendientes registrados en Regional / supervisor.")
             else:
-                # Cumplimiento
                 df_s_tot = df_eval_total.groupby('Regional / supervisor').agg(
                     Total=('Terminal', 'count'),
                     Comprobados=('Estado', lambda x: x.str.contains('True').sum())
@@ -411,7 +406,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
     titulo_alertas = f"⚠️ Alertas y Pendientes ({selected_form})" if selected_form != "Todos" else "⚠️ Alertas y Pendientes (Consolidado)"
     st.subheader(titulo_alertas)
 
-    # Filtrar solo casos no comprobados o sin respuesta
     df_alertas_base = df_eval_total[df_eval_total['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
 
     filtro_estado = st.selectbox(
