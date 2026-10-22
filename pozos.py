@@ -73,7 +73,29 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         st.warning("⚠️ No se pudo cargar el archivo Data_Pozos desde Google Drive.")
         return
 
-    # --- 1. LECTURA MULTIPESTAÑA DEL EXCEL DE POZOS ---
+    # --- 1. CRUCE DEL TIPO DE PUNTO CON LA BASE DE INASISTENCIAS (FQ vs PR) ---
+    dict_tipos = {}
+    if bytes_inasistencias:
+        try:
+            df_inas_data = pd.read_excel(bytes_inasistencias)
+            df_inas_data = df_inas_data.rename(columns={c: str(c).strip() for c in df_inas_data.columns})
+            
+            col_t_inas = next((c for c in df_inas_data.columns if str(c).upper() in ['TERMINAL', 'USERNAME']), None)
+            if not col_t_inas:
+                col_t_inas = next((c for c in df_inas_data.columns if any(w in str(c).lower() for w in ['terminal', 'username', 'codigo', 'código'])), None)
+                
+            col_tipo_inas = next((c for c in df_inas_data.columns if str(c).upper() == 'TIPO'), None)
+            if not col_tipo_inas:
+                col_tipo_inas = next((c for c in df_inas_data.columns if 'tipo' in str(c).lower()), None)
+                
+            if col_t_inas and col_tipo_inas:
+                df_inas_data['T_CLEAN'] = df_inas_data[col_t_inas].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                df_inas_data['TIPO_CLEAN'] = df_inas_data[col_tipo_inas].astype(str).str.strip()
+                dict_tipos = df_inas_data.dropna(subset=['T_CLEAN', 'TIPO_CLEAN']).drop_duplicates(subset=['T_CLEAN']).set_index('T_CLEAN')['TIPO_CLEAN'].to_dict()
+        except Exception:
+            pass
+
+    # --- 2. LECTURA MULTIPESTAÑA DEL EXCEL DE POZOS ---
     try:
         xl = pd.ExcelFile(bytes_pozos)
         nombres_hojas = xl.sheet_names
@@ -92,7 +114,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         st.error(f"⚠️ Error al leer las pestañas del archivo de Pozos: {e}")
         return
 
-    # --- 2. PREPARACIÓN DEL DIRECTORIO OBJETIVO DESDE "HOJA 2" ---
+    # --- 3. PREPARACIÓN DEL DIRECTORIO OBJETIVO DESDE "HOJA 2" ---
     df_obj = df_obj_raw.rename(columns={c: str(c).strip() for c in df_obj_raw.columns})
     col_term_obj = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['código', 'codigo', 'terminal', 'username'])), None)
     if not col_term_obj:
@@ -103,13 +125,35 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
     
     col_terr = next((c for c in df_obj.columns if 'territorial' in str(c).lower()), None)
     col_reg = next((c for c in df_obj.columns if str(c).strip().upper() == 'REG'), None)
+    col_sup = next((c for c in df_obj.columns if str(c).strip().upper() == 'SUP'), None)
+
     if not col_reg:
-        col_reg = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['sup', 'regional', 'supervisor', 'jerarquia'])), None)
+        col_reg = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['regional', 'jerarquia'])), None)
+    if not col_sup:
+        col_sup = next((c for c in df_obj.columns if 'supervisor' in str(c).lower()), None)
 
-    df_universo = df_obj[['TERMINAL_CLEAN', col_terr, col_reg]].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
-    df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_terr: 'Territorial', col_reg: 'Regional / supervisor'})
+    # REGLA EDGAR PADILLA: usar SUP para Edgar Padilla; usar REG para los demás
+    def asignar_regional_supervisor(row):
+        terr_val = str(row[col_terr]).strip() if (col_terr and pd.notna(row[col_terr])) else ''
+        sup_val = str(row[col_sup]).strip() if (col_sup and pd.notna(row[col_sup])) else ''
+        reg_val = str(row[col_reg]).strip() if (col_reg and pd.notna(row[col_reg])) else ''
+        
+        if 'edgar padilla' in terr_val.lower():
+            return sup_val if sup_val and sup_val.lower() not in ['nan', 'none', '-'] else reg_val
+        if reg_val and reg_val.lower() not in ['nan', 'none', '-']:
+            return reg_val
+        return sup_val if sup_val and sup_val.lower() not in ['nan', 'none', '-'] else terr_val
 
-    # --- 3. LIMPIEZA Y FILTRADO DE LA HOJA DE RESPUESTAS (HOJA 1) ---
+    df_obj['Regional / supervisor'] = df_obj.apply(asignar_regional_supervisor, axis=1)
+
+    # Universo consolidado de puntos objetivo
+    df_universo = df_obj[['TERMINAL_CLEAN', col_terr, 'Regional / supervisor']].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
+    df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_terr: 'Territorial'})
+
+    # Asignar Tipo de Punto desde el diccionario de Inasistencias
+    df_universo['Tipo de Punto'] = df_universo['TERMINAL'].map(dict_tipos).fillna('-')
+
+    # --- 4. LIMPIEZA Y FILTRADO DE LA HOJA DE RESPUESTAS (HOJA 1) ---
     df_p = df_pozos_raw.rename(columns={c: str(c).strip() for c in df_pozos_raw.columns})
     col_term_p = next((c for c in df_p.columns if any(w in str(c).lower() for w in ['terminal', 'username', 'código', 'codigo'])), None)
     if not col_term_p:
@@ -135,12 +179,10 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         return
 
     formularios_ordenados = ordenar_formularios_por_fecha(formularios_validos)
-    
-    # El más reciente primero como valor predeterminado (index=0)
     forms_dropdown = formularios_ordenados[::-1] + ["Todos"]
 
-    # --- 4. FILTROS PRINCIPALES SUPERIORES ---
-    col_f1, col_f2, col_f3 = st.columns(3)
+    # --- 5. FILTROS PRINCIPALES SUPERIORES (INCLUYE TIPO DE PUNTO) ---
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
         selected_form = st.selectbox("📋 1. Formulario:", forms_dropdown, index=0)
     with col_f2:
@@ -152,9 +194,20 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         supervisores = ["Todos"] + sorted(df_u_terr['Regional / supervisor'].dropna().unique().tolist())
         selected_sup = st.selectbox("👔 3. Regional / supervisor:", supervisores)
 
-    df_objetivo_filtrado = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
+    df_u_sup = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
 
-    # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO ---
+    # Filtro Tipo de Punto (FQ vs PR)
+    tipos_disponibles = sorted([str(x).strip() for x in df_universo['Tipo de Punto'].dropna().unique() if str(x).strip() not in ['', '-']])
+    if not tipos_disponibles:
+        tipos_disponibles = ['FQ', 'PR']
+    opciones_tipo = ["Todos"] + tipos_disponibles
+
+    with col_f4:
+        selected_tipo = st.selectbox("🏪 4. Tipo de Punto:", opciones_tipo)
+
+    df_objetivo_filtrado = df_u_sup if selected_tipo == "Todos" else df_u_sup[df_u_sup['Tipo de Punto'] == selected_tipo]
+
+    # --- 6. FUNCIÓN EVALUADORA POR FORMULARIO ---
     def evaluar_formulario(form_name, base_objetivo):
         df_sub = df_p[df_p['FORMULARIO'] == form_name]
         registros = []
@@ -163,6 +216,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
             term = row['TERMINAL']
             terr = row['Territorial']
             sup = row['Regional / supervisor']
+            tipo_pto = row.get('Tipo de Punto', '-')
             
             puntos_term = df_sub[df_sub['TERMINAL'] == term]
             num_intentos = len(puntos_term)
@@ -206,6 +260,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
             registros.append({
                 'Territorial': terr,
                 'Regional / supervisor': sup,
+                'Tipo de Punto': tipo_pto,
                 'Terminal': term,
                 'Estado': estado,
                 'Intentos': intentos_val,
@@ -213,7 +268,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
             })
         return pd.DataFrame(registros)
 
-    # --- 6. CUADROS EVOLUTIVOS (PERMANECEN CON EL HISTÓRICO COMPLETO) ---
+    # --- 7. CUADROS EVOLUTIVOS (HISTÓRICO PERMANENTE) ---
     formularios_a_mostrar = formularios_ordenados
 
     datos_evolutivo = {}
@@ -299,7 +354,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     st.divider()
 
-    # --- 7. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
+    # --- 8. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
     form_eval_graficos = [selected_form] if selected_form != "Todos" else formularios_ordenados
     dfs_graficos = []
     for f_name in form_eval_graficos:
@@ -424,7 +479,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     st.divider()
 
-    # --- 8. CUADRO: ALERTAS Y PENDIENTES CON FILTROS Y TARJETAS ---
+    # --- 9. CUADRO: ALERTAS Y PENDIENTES CON FILTROS Y TARJETAS ---
     st.subheader("⚠️ Alertas y Pendientes")
 
     col_al1, col_al2, col_al3 = st.columns(3)
@@ -433,7 +488,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         filtro_form_al = st.selectbox(
             "📋 Filtrar por Formulario:",
             opciones_form_alertas,
-            index=0,  # Más reciente por defecto
+            index=0,
             key="f_form_alertas_sub"
         )
     with col_al2:
@@ -479,7 +534,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
     if filtro_estado_al != "Todos":
         df_tabla_final = df_tabla_final[df_tabla_final['Estado'] == filtro_estado_al]
 
-    cols_orden = ['Formulario', 'Territorial', 'Regional / supervisor', 'Terminal', 'Estado', 'Intentos', 'Evidencia']
+    cols_orden = ['Formulario', 'Territorial', 'Regional / supervisor', 'Tipo de Punto', 'Terminal', 'Estado', 'Intentos', 'Evidencia']
     df_mostrar = df_tabla_final[[c for c in cols_orden if c in df_tabla_final.columns]]
 
     if df_mostrar.empty:
@@ -507,7 +562,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
         if st.button("📋 Copiar Pendientes de Pozo para WhatsApp", key="btn_wsp_pozo"):
             lineas = [
-                f"Form: {r['Formulario']} | Term: {r['Terminal']} | Terr: {r['Territorial']} | Sup: {r['Regional / supervisor']} | Estado: {r['Estado']} | Intentos: {r['Intentos']}" + (f" | Foto: {r['Evidencia']}" if pd.notna(r['Evidencia']) else "")
+                f"Form: {r['Formulario']} | Term: {r['Terminal']} ({r.get('Tipo de Punto', '-')}) | Terr: {r['Territorial']} | Sup: {r['Regional / supervisor']} | Estado: {r['Estado']} | Intentos: {r['Intentos']}" + (f" | Foto: {r['Evidencia']}" if pd.notna(r['Evidencia']) else "")
                 for _, r in df_mostrar.iterrows()
             ]
             st.code("\n".join(lineas), language=None)
