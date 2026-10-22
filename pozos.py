@@ -194,7 +194,7 @@ def cargar_y_precomputar_pozos(bytes_pozos, bytes_inasistencias):
 
 # --- FUNCIÓN PRINCIPAL DEL MÓDULO ---
 def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
-    st.title("🎱 Resultado Encuesta de Pozo")
+    st.title("📋 Resultado Encuesta de Pozo")
     
     if not bytes_pozos:
         st.warning("⚠️ No se pudo cargar el archivo Data_Pozos desde Google Drive.")
