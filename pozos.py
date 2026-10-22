@@ -62,7 +62,7 @@ def ordenar_base_pozos_cronologicamente(df):
     dt_combined = pd.to_datetime(fechas_norm + ' ' + horas_norm, errors='coerce')
     df['_FECHA_HORA_ORDEN'] = dt_combined
     
-    # Orden ascendente: el último intento queda siempre en la última fila (iloc[-1])
+    # Orden ascendente: el último intento queda en la última fila (iloc[-1])
     df = df.sort_values(by=['_FECHA_HORA_ORDEN'], ascending=True).reset_index(drop=True)
     return df
 
@@ -135,7 +135,9 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         return
 
     formularios_ordenados = ordenar_formularios_por_fecha(formularios_validos)
-    forms_dropdown = ["Todos"] + formularios_ordenados[::-1]
+    
+    # El más reciente primero como valor predeterminado (index=0)
+    forms_dropdown = formularios_ordenados[::-1] + ["Todos"]
 
     # --- 4. FILTROS PRINCIPALES SUPERIORES ---
     col_f1, col_f2, col_f3 = st.columns(3)
@@ -152,7 +154,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     df_objetivo_filtrado = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
 
-    # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO (ÚLTIMO INTENTO CRONOLÓGICO) ---
+    # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO ---
     def evaluar_formulario(form_name, base_objetivo):
         df_sub = df_p[df_p['FORMULARIO'] == form_name]
         registros = []
@@ -170,16 +172,13 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                 url_val = None
                 intentos_val = 0
             else:
-                # Último registro en el tiempo (gracias al ordenamiento previo)
                 ultimo_reg = puntos_term.iloc[-1]
                 ultimo_res = str(ultimo_reg.get('RESULTADO', '')).strip().lower()
                 
-                # Evaluación de match
                 resultados_todos = [str(r).strip().lower() for r in puntos_term['RESULTADO'].dropna().tolist()]
                 tiene_match_en_alguno = any('match' in r and 'no_match' not in r for r in resultados_todos)
                 ultimo_es_match = ('match' in ultimo_res and 'no_match' not in ultimo_res)
                 
-                # Extraer la última URL de fotografía
                 url_val = None
                 if col_url:
                     fotos_validas = puntos_term[
@@ -190,7 +189,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                         raw_url = fotos_validas[col_url].iloc[-1]
                         url_val = limpiar_url_evidencia(raw_url)
                 
-                # REGLA: Si el último intento fue match (o logró match):
                 if ultimo_es_match:
                     if num_intentos == 1:
                         estado = "True - 1er intento"
@@ -215,8 +213,8 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
             })
         return pd.DataFrame(registros)
 
-    # --- 6. CUADROS EVOLUTIVOS ---
-    formularios_a_mostrar = [selected_form] if selected_form != "Todos" else formularios_ordenados
+    # --- 6. CUADROS EVOLUTIVOS (PERMANECEN CON EL HISTÓRICO COMPLETO) ---
+    formularios_a_mostrar = formularios_ordenados
 
     datos_evolutivo = {}
     for form in formularios_a_mostrar:
@@ -310,7 +308,8 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         dfs_graficos.append(df_temp)
     df_eval_total = pd.concat(dfs_graficos, ignore_index=True) if dfs_graficos else pd.DataFrame()
 
-    st.subheader("📊 Análisis de Desempeño y Cobertura")
+    titulo_graficos = f"📊 Análisis de Desempeño y Cobertura ({selected_form})" if selected_form != "Todos" else "📊 Análisis de Desempeño y Cobertura (Consolidado)"
+    st.subheader(titulo_graficos)
 
     modo_metrica = st.radio(
         "Selecciona la métrica a visualizar:",
@@ -430,11 +429,11 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     col_al1, col_al2, col_al3 = st.columns(3)
     with col_al1:
-        opciones_form_alertas = formularios_ordenados + ["Todos"]
+        opciones_form_alertas = formularios_ordenados[::-1] + ["Todos"]
         filtro_form_al = st.selectbox(
             "📋 Filtrar por Formulario:",
             opciones_form_alertas,
-            index=0,
+            index=0,  # Más reciente por defecto
             key="f_form_alertas_sub"
         )
     with col_al2:
