@@ -31,33 +31,38 @@ def ordenar_base_pozos_cronologicamente(df):
     if not col_f:
         return df
 
-    def normalizar_fecha(val):
+    def conv_fecha(val):
         if pd.isna(val):
             return "1970-01-01"
         if hasattr(val, 'strftime'):
             return val.strftime('%Y-%m-%d')
-        val_str = str(val).strip().split(' ')[0]
-        partes = val_str.split('/')
-        if len(partes) == 3:
-            return f"{partes[2]}-{partes[1]}-{partes[0]}"
-        return val_str
+        s = str(val).strip().split(' ')[0]
+        if '/' in s:
+            partes = s.split('/')
+            if len(partes) == 3:
+                if len(partes[2]) == 4:
+                    return f"{partes[2]}-{int(partes[1]):02d}-{int(partes[0]):02d}"
+                elif len(partes[0]) == 4:
+                    return f"{partes[0]}-{int(partes[1]):02d}-{int(partes[2]):02d}"
+        return s
 
-    def normalizar_hora(val):
+    def conv_hora(val):
         if pd.isna(val):
             return "00:00:00"
         if hasattr(val, 'strftime'):
             return val.strftime('%H:%M:%S')
-        val_str = str(val).strip()
-        if ' ' in val_str:
-            val_str = val_str.split(' ')[-1]
-        return val_str
+        s = str(val).strip()
+        if ' ' in s:
+            s = s.split(' ')[-1]
+        return s
 
-    f_norm = df[col_f].apply(normalizar_fecha)
-    h_norm = df[col_h].apply(normalizar_hora) if col_h else "00:00:00"
+    fechas_norm = df[col_f].apply(conv_fecha)
+    horas_norm = df[col_h].apply(conv_hora) if col_h else "00:00:00"
     
-    dt_series = pd.to_datetime(f_norm + ' ' + h_norm, errors='coerce')
-    df['_FECHA_HORA_ORDEN'] = dt_series
+    dt_combined = pd.to_datetime(fechas_norm + ' ' + horas_norm, errors='coerce')
+    df['_FECHA_HORA_ORDEN'] = dt_combined
     
+    # Orden ascendente: el último intento queda siempre en la última fila (iloc[-1])
     df = df.sort_values(by=['_FECHA_HORA_ORDEN'], ascending=True).reset_index(drop=True)
     return df
 
@@ -147,7 +152,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     df_objetivo_filtrado = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
 
-    # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO ---
+    # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO (ÚLTIMO INTENTO CRONOLÓGICO) ---
     def evaluar_formulario(form_name, base_objetivo):
         df_sub = df_p[df_p['FORMULARIO'] == form_name]
         registros = []
@@ -165,10 +170,16 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                 url_val = None
                 intentos_val = 0
             else:
-                resultados = puntos_term['RESULTADO'].astype(str).str.lower().tolist()
-                tiene_match = any('match' == r for r in resultados)
-                tiene_no_match = any('no_match' == r for r in resultados)
+                # Último registro en el tiempo (gracias al ordenamiento previo)
+                ultimo_reg = puntos_term.iloc[-1]
+                ultimo_res = str(ultimo_reg.get('RESULTADO', '')).strip().lower()
                 
+                # Evaluación de match
+                resultados_todos = [str(r).strip().lower() for r in puntos_term['RESULTADO'].dropna().tolist()]
+                tiene_match_en_alguno = any('match' in r and 'no_match' not in r for r in resultados_todos)
+                ultimo_es_match = ('match' in ultimo_res and 'no_match' not in ultimo_res)
+                
+                # Extraer la última URL de fotografía
                 url_val = None
                 if col_url:
                     fotos_validas = puntos_term[
@@ -179,16 +190,20 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                         raw_url = fotos_validas[col_url].iloc[-1]
                         url_val = limpiar_url_evidencia(raw_url)
                 
-                if tiene_match:
-                    if not tiene_no_match and num_intentos == 1:
+                # REGLA: Si el último intento fue match (o logró match):
+                if ultimo_es_match:
+                    if num_intentos == 1:
                         estado = "True - 1er intento"
                     else:
-                        estado = "True - Segundo intento"
+                        estado = "True - 2do intento"
                     url_val = None
-                    intentos_val = num_intentos
+                elif tiene_match_en_alguno:
+                    estado = "True - 2do intento"
+                    url_val = None
                 else:
                     estado = "No comprobado"
-                    intentos_val = num_intentos
+
+                intentos_val = num_intentos
 
             registros.append({
                 'Territorial': terr,
@@ -413,15 +428,13 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
     # --- 8. CUADRO: ALERTAS Y PENDIENTES CON FILTROS Y TARJETAS ---
     st.subheader("⚠️ Alertas y Pendientes")
 
-    # FILTROS DE LA SECCIÓN (Formulario por default = más antiguo)
     col_al1, col_al2, col_al3 = st.columns(3)
     with col_al1:
-        # formularios_ordenados está ordenado de más antiguo a más reciente
         opciones_form_alertas = formularios_ordenados + ["Todos"]
         filtro_form_al = st.selectbox(
             "📋 Filtrar por Formulario:",
             opciones_form_alertas,
-            index=0,  # Formulario más antiguo por defecto
+            index=0,
             key="f_form_alertas_sub"
         )
     with col_al2:
@@ -440,7 +453,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
             key="f_estado_alertas_sub"
         )
 
-    # EVALUACIÓN DE FORMULARIOS PARA ALERTAS
     if filtro_form_al == "Todos":
         dfs_al = []
         for f_name in formularios_ordenados[::-1]:
@@ -452,23 +464,18 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         df_alertas_raw = evaluar_formulario(filtro_form_al, df_objetivo_filtrado)
         df_alertas_raw['Formulario'] = filtro_form_al
 
-    # Filtrar por Supervisor si se selecciona uno específico
     if filtro_sup_al != "Todos":
         df_alertas_raw = df_alertas_raw[df_alertas_raw['Regional / supervisor'] == filtro_sup_al]
 
-    # Base pendiente: solo No comprobado y Sin respuesta
     df_pendientes_base = df_alertas_raw[df_alertas_raw['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
 
-    # CÁLCULO DE CANTIDADES PARA LAS TARJETAS (según Formulario y Supervisor seleccionado)
     cant_no_comp = int((df_pendientes_base['Estado'] == 'No comprobado').sum())
     cant_sin_resp = int((df_pendientes_base['Estado'] == 'Sin respuesta').sum())
 
-    # RENDERIZADO DE LAS 2 TARJETAS
     card1, card2 = st.columns(2)
     card1.metric("Cantidad No Comprobados", f"{cant_no_comp:,}")
     card2.metric("Cantidad de Sin Respuesta", f"{cant_sin_resp:,}")
 
-    # Filtrar por Estado para la tabla
     df_tabla_final = df_pendientes_base.copy()
     if filtro_estado_al != "Todos":
         df_tabla_final = df_tabla_final[df_tabla_final['Estado'] == filtro_estado_al]
