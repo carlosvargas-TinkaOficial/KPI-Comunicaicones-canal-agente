@@ -23,7 +23,7 @@ def ordenar_formularios_por_fecha(forms):
         return str(f)
     return sorted(forms, key=clave_fecha)
 
-# --- NORMALIZACIÓN Y ORDENAMIENTO POR FECHA Y HORA DE SUBIDA ---
+# --- ORDENAMIENTO CRONOLÓGICO DE RESPUESTAS (FECHA Y HORA) ---
 def ordenar_base_pozos_cronologicamente(df):
     col_f = next((c for c in df.columns if str(c).strip().upper() == 'FECHA'), None)
     col_h = next((c for c in df.columns if str(c).strip().upper() == 'HORA'), None)
@@ -58,57 +58,76 @@ def ordenar_base_pozos_cronologicamente(df):
     dt_series = pd.to_datetime(f_norm + ' ' + h_norm, errors='coerce')
     df['_FECHA_HORA_ORDEN'] = dt_series
     
-    # Orden ascendente: la última subida queda al final (iloc[-1])
+    # Se ordena de forma ascendente para que la última subida quede al final (iloc[-1])
     df = df.sort_values(by=['_FECHA_HORA_ORDEN'], ascending=True).reset_index(drop=True)
     return df
 
-def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
+def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
     st.title("🎱 Resultado Encuesta de Pozo")
     
     if not bytes_pozos:
-        st.warning("⚠️ No se pudo cargar la base de datos de Pozos desde Google Drive.")
-        return
-    if not bytes_inasistencias:
-        st.warning("⚠️ No se pudo cargar la base de datos de Inasistencias (Directorio de Puntos).")
+        st.warning("⚠️ No se pudo cargar el archivo Data_Pozos desde Google Drive.")
         return
 
+    # --- 1. LECTURA MULTIPESTAÑA DEL EXCEL DE POZOS ---
     try:
-        df_pozos_raw = pd.read_excel(bytes_pozos)
-        df_inas_raw = pd.read_excel(bytes_inasistencias)
+        xl = pd.ExcelFile(bytes_pozos)
+        nombres_hojas = xl.sheet_names
+        
+        # Leer respuestas de encuesta (Hoja 1 o primera pestaña)
+        hoja_encuestas = next((h for h in nombres_hojas if '1' in h or 'pozo' in h.lower()), nombres_hojas[0])
+        df_pozos_raw = pd.read_excel(xl, sheet_name=hoja_encuestas)
+        
+        # Leer universo objetivo desde "Hoja 2"
+        if "Hoja 2" in nombres_hojas:
+            df_obj_raw = pd.read_excel(xl, sheet_name="Hoja 2")
+        elif len(nombres_hojas) > 1:
+            df_obj_raw = pd.read_excel(xl, sheet_name=nombres_hojas[1])
+        else:
+            # Respaldo si no encuentra Hoja 2
+            df_obj_raw = pd.read_excel(bytes_inasistencias) if bytes_inasistencias else df_pozos_raw
+            
     except Exception as e:
-        st.error(f"⚠️ Error al leer los archivos: {e}")
+        st.error(f"⚠️ Error al leer las pestañas del archivo de Pozos: {e}")
         return
 
-    # --- 1. PREPARACIÓN DEL DIRECTORIO BASE DE PUNTOS OBJETIVO ---
-    df_inas = df_inas_raw.rename(columns={c: str(c).strip() for c in df_inas_raw.columns})
-    col_term_inas = 'TERMINAL' if 'TERMINAL' in df_inas.columns else ('username' if 'username' in df_inas.columns else None)
-    if not col_term_inas:
-        st.error("No se encontró la columna de terminal o username en la base de Inasistencias.")
-        return
-
-    df_inas['TERMINAL_CLEAN'] = df_inas[col_term_inas].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-    col_terr = next((c for c in df_inas.columns if any(w in c.lower() for w in ['territorial', 'regional'])), 'TERRITORIAL')
-    col_sup = next((c for c in df_inas.columns if 'jerarquia' in c.lower() or 'supervisor' in c.lower()), 'Jerarquia_Dinamica')
+    # --- 2. PREPARACIÓN DEL DIRECTORIO OBJETIVO DESDE "HOJA 2" ---
+    df_obj = df_obj_raw.rename(columns={c: str(c).strip() for c in df_obj_raw.columns})
     
-    df_universo = df_inas[['TERMINAL_CLEAN', col_terr, col_sup]].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
-    df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_terr: 'Territorial', col_sup: 'Regional / supervisor'})
+    # Identificar columna del terminal en Hoja 2 (ej: "Código del terminal")
+    col_term_obj = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['código', 'codigo', 'terminal', 'username'])), None)
+    if not col_term_obj:
+        st.error("No se encontró la columna de código de terminal en la 'Hoja 2'.")
+        return
 
-    # --- 2. FILTRADO, LIMPIEZA Y ORDENAMIENTO POR FECHA/HORA DE DATA_POZOS ---
+    df_obj['TERMINAL_CLEAN'] = df_obj[col_term_obj].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    
+    # Identificar Territorial y Regional / Supervisor en Hoja 2 (TERRITORIAL, REG, SUP)
+    col_terr = next((c for c in df_obj.columns if 'territorial' in str(c).lower()), None)
+    col_reg = next((c for c in df_obj.columns if str(c).strip().upper() == 'REG'), None)
+    if not col_reg:
+        col_reg = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['sup', 'regional', 'supervisor', 'jerarquia'])), None)
+
+    # Universo consolidado de puntos objetivo
+    df_universo = df_obj[['TERMINAL_CLEAN', col_terr, col_reg]].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
+    df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_terr: 'Territorial', col_reg: 'Regional / supervisor'})
+
+    # --- 3. LIMPIEZA Y FILTRADO DE LA HOJA DE RESPUESTAS (HOJA 1) ---
     df_p = df_pozos_raw.rename(columns={c: str(c).strip() for c in df_pozos_raw.columns})
-    col_term_p = 'TERMINAL' if 'TERMINAL' in df_p.columns else ('USERNAME' if 'USERNAME' in df_p.columns else None)
+    col_term_p = next((c for c in df_p.columns if any(w in str(c).lower() for w in ['terminal', 'username', 'código', 'codigo'])), None)
     if not col_term_p:
-        st.error("No se encontró la columna TERMINAL en Data_Pozos.")
+        st.error("No se encontró columna de terminal en la hoja de respuestas.")
         return
     df_p['TERMINAL'] = df_p[col_term_p].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
     col_url = next((c for c in df_p.columns if any(w in str(c).lower() for w in ['url', 'link', 'foto', 'image', 'imagen', 'evidencia'])), None)
 
-    # Ordenar por FECHA y HORA
+    # Ordenar por FECHA y HORA para garantizar la última foto subida
     df_p = ordenar_base_pozos_cronologicamente(df_p)
 
-    # Formularios válidos con 'POZO' y sin 'NL'
+    # Filtrar solo formularios válidos con "POZO" y sin "NL"
     if 'FORMULARIO' not in df_p.columns:
-        st.error("No se encontró la columna FORMULARIO en Data_Pozos.")
+        st.error("No se encontró la columna FORMULARIO en la hoja de respuestas.")
         return
 
     todos_formularios = df_p['FORMULARIO'].dropna().unique().tolist()
@@ -124,7 +143,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
     formularios_ordenados = ordenar_formularios_por_fecha(formularios_validos)
     forms_dropdown = ["Todos"] + formularios_ordenados[::-1]
 
-    # --- 3. FILTROS PRINCIPALES SUPERIORES ---
+    # --- 4. FILTROS PRINCIPALES SUPERIORES ---
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
         selected_form = st.selectbox("📋 1. Formulario:", forms_dropdown, index=0)
@@ -137,9 +156,10 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
         supervisores = ["Todos"] + sorted(df_u_terr['Regional / supervisor'].dropna().unique().tolist())
         selected_sup = st.selectbox("👔 3. Regional / supervisor:", supervisores)
 
+    # Base objetivo filtrada según Territorial y Regional / supervisor
     df_objetivo_filtrado = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
 
-    # --- 4. FUNCIÓN EVALUADORA POR FORMULARIO (ÚLTIMA FOTO SUBIDA) ---
+    # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO ---
     def evaluar_formulario(form_name, base_objetivo):
         df_sub = df_p[df_p['FORMULARIO'] == form_name]
         registros = []
@@ -192,7 +212,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
             })
         return pd.DataFrame(registros)
 
-    # --- 5. CUADROS EVOLUTIVOS (FILTRADOS SEGÚN EL FORMULARIO SELECCIONADO) ---
+    # --- 6. CUADROS EVOLUTIVOS (FILTRADOS SEGÚN FORMULARIO SELECCIONADO) ---
     formularios_a_mostrar = [selected_form] if selected_form != "Todos" else formularios_ordenados
 
     datos_evolutivo = {}
@@ -278,7 +298,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
 
     st.divider()
 
-    # --- 6. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
+    # --- 7. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
     form_eval_graficos = [selected_form] if selected_form != "Todos" else formularios_ordenados
     dfs_graficos = []
     for f_name in form_eval_graficos:
@@ -402,7 +422,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias):
 
     st.divider()
 
-    # --- 7. CUADRO: ALERTAS Y PENDIENTES ---
+    # --- 8. CUADRO: ALERTAS Y PENDIENTES ---
     titulo_alertas = f"⚠️ Alertas y Pendientes ({selected_form})" if selected_form != "Todos" else "⚠️ Alertas y Pendientes (Consolidado)"
     st.subheader(titulo_alertas)
 
