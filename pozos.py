@@ -23,7 +23,7 @@ def ordenar_formularios_por_fecha(forms):
         return str(f)
     return sorted(forms, key=clave_fecha)
 
-# --- ORDENAMIENTO CRONOLÓGICO DE RESPUESTAS (FECHA Y HORA) ---
+# --- NORMALIZACIÓN Y ORDENAMIENTO POR FECHA Y HORA DE SUBIDA ---
 def ordenar_base_pozos_cronologicamente(df):
     col_f = next((c for c in df.columns if str(c).strip().upper() == 'FECHA'), None)
     col_h = next((c for c in df.columns if str(c).strip().upper() == 'HORA'), None)
@@ -58,7 +58,6 @@ def ordenar_base_pozos_cronologicamente(df):
     dt_series = pd.to_datetime(f_norm + ' ' + h_norm, errors='coerce')
     df['_FECHA_HORA_ORDEN'] = dt_series
     
-    # Se ordena de forma ascendente para que la última subida quede al final (iloc[-1])
     df = df.sort_values(by=['_FECHA_HORA_ORDEN'], ascending=True).reset_index(drop=True)
     return df
 
@@ -74,17 +73,14 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         xl = pd.ExcelFile(bytes_pozos)
         nombres_hojas = xl.sheet_names
         
-        # Leer respuestas de encuesta (Hoja 1 o primera pestaña)
         hoja_encuestas = next((h for h in nombres_hojas if '1' in h or 'pozo' in h.lower()), nombres_hojas[0])
         df_pozos_raw = pd.read_excel(xl, sheet_name=hoja_encuestas)
         
-        # Leer universo objetivo desde "Hoja 2"
         if "Hoja 2" in nombres_hojas:
             df_obj_raw = pd.read_excel(xl, sheet_name="Hoja 2")
         elif len(nombres_hojas) > 1:
             df_obj_raw = pd.read_excel(xl, sheet_name=nombres_hojas[1])
         else:
-            # Respaldo si no encuentra Hoja 2
             df_obj_raw = pd.read_excel(bytes_inasistencias) if bytes_inasistencias else df_pozos_raw
             
     except Exception as e:
@@ -93,8 +89,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     # --- 2. PREPARACIÓN DEL DIRECTORIO OBJETIVO DESDE "HOJA 2" ---
     df_obj = df_obj_raw.rename(columns={c: str(c).strip() for c in df_obj_raw.columns})
-    
-    # Identificar columna del terminal en Hoja 2 (ej: "Código del terminal")
     col_term_obj = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['código', 'codigo', 'terminal', 'username'])), None)
     if not col_term_obj:
         st.error("No se encontró la columna de código de terminal en la 'Hoja 2'.")
@@ -102,13 +96,11 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     df_obj['TERMINAL_CLEAN'] = df_obj[col_term_obj].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     
-    # Identificar Territorial y Regional / Supervisor en Hoja 2 (TERRITORIAL, REG, SUP)
     col_terr = next((c for c in df_obj.columns if 'territorial' in str(c).lower()), None)
     col_reg = next((c for c in df_obj.columns if str(c).strip().upper() == 'REG'), None)
     if not col_reg:
         col_reg = next((c for c in df_obj.columns if any(w in str(c).lower() for w in ['sup', 'regional', 'supervisor', 'jerarquia'])), None)
 
-    # Universo consolidado de puntos objetivo
     df_universo = df_obj[['TERMINAL_CLEAN', col_terr, col_reg]].dropna(subset=['TERMINAL_CLEAN']).drop_duplicates(subset=['TERMINAL_CLEAN'])
     df_universo = df_universo.rename(columns={'TERMINAL_CLEAN': 'TERMINAL', col_terr: 'Territorial', col_reg: 'Regional / supervisor'})
 
@@ -121,11 +113,8 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
     df_p['TERMINAL'] = df_p[col_term_p].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
     col_url = next((c for c in df_p.columns if any(w in str(c).lower() for w in ['url', 'link', 'foto', 'image', 'imagen', 'evidencia'])), None)
-
-    # Ordenar por FECHA y HORA para garantizar la última foto subida
     df_p = ordenar_base_pozos_cronologicamente(df_p)
 
-    # Filtrar solo formularios válidos con "POZO" y sin "NL"
     if 'FORMULARIO' not in df_p.columns:
         st.error("No se encontró la columna FORMULARIO en la hoja de respuestas.")
         return
@@ -156,7 +145,6 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
         supervisores = ["Todos"] + sorted(df_u_terr['Regional / supervisor'].dropna().unique().tolist())
         selected_sup = st.selectbox("👔 3. Regional / supervisor:", supervisores)
 
-    # Base objetivo filtrada según Territorial y Regional / supervisor
     df_objetivo_filtrado = df_u_terr if selected_sup == "Todos" else df_u_terr[df_u_terr['Regional / supervisor'] == selected_sup]
 
     # --- 5. FUNCIÓN EVALUADORA POR FORMULARIO ---
@@ -212,7 +200,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
             })
         return pd.DataFrame(registros)
 
-    # --- 6. CUADROS EVOLUTIVOS (FILTRADOS SEGÚN FORMULARIO SELECCIONADO) ---
+    # --- 6. CUADROS EVOLUTIVOS ---
     formularios_a_mostrar = [selected_form] if selected_form != "Todos" else formularios_ordenados
 
     datos_evolutivo = {}
@@ -422,25 +410,71 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     st.divider()
 
-    # --- 8. CUADRO: ALERTAS Y PENDIENTES ---
-    titulo_alertas = f"⚠️ Alertas y Pendientes ({selected_form})" if selected_form != "Todos" else "⚠️ Alertas y Pendientes (Consolidado)"
-    st.subheader(titulo_alertas)
+    # --- 8. CUADRO: ALERTAS Y PENDIENTES CON FILTROS Y TARJETAS ---
+    st.subheader("⚠️ Alertas y Pendientes")
 
-    df_alertas_base = df_eval_total[df_eval_total['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
+    # FILTROS DE LA SECCIÓN (Formulario por default = más antiguo)
+    col_al1, col_al2, col_al3 = st.columns(3)
+    with col_al1:
+        # formularios_ordenados está ordenado de más antiguo a más reciente
+        opciones_form_alertas = formularios_ordenados + ["Todos"]
+        filtro_form_al = st.selectbox(
+            "📋 Filtrar por Formulario:",
+            opciones_form_alertas,
+            index=0,  # Formulario más antiguo por defecto
+            key="f_form_alertas_sub"
+        )
+    with col_al2:
+        lista_sups = ["Todos"] + sorted(df_objetivo_filtrado['Regional / supervisor'].dropna().unique().tolist())
+        filtro_sup_al = st.selectbox(
+            "👔 Filtrar por Supervisor:",
+            lista_sups,
+            index=0,
+            key="f_sup_alertas_sub"
+        )
+    with col_al3:
+        filtro_estado_al = st.selectbox(
+            "🔍 Filtrar por Estado:",
+            ["Todos", "No comprobado", "Sin respuesta"],
+            index=0,
+            key="f_estado_alertas_sub"
+        )
 
-    filtro_estado = st.selectbox(
-        "🔍 Filtrar por Estado:",
-        ["Todos", "No comprobado", "Sin respuesta"],
-        index=0,
-        key="f_estado_alertas"
-    )
-    
-    df_alertas = df_alertas_base.copy()
-    if filtro_estado != "Todos":
-        df_alertas = df_alertas[df_alertas['Estado'] == filtro_estado]
+    # EVALUACIÓN DE FORMULARIOS PARA ALERTAS
+    if filtro_form_al == "Todos":
+        dfs_al = []
+        for f_name in formularios_ordenados[::-1]:
+            df_eval_f = evaluar_formulario(f_name, df_objetivo_filtrado)
+            df_eval_f['Formulario'] = f_name
+            dfs_al.append(df_eval_f)
+        df_alertas_raw = pd.concat(dfs_al, ignore_index=True) if dfs_al else pd.DataFrame()
+    else:
+        df_alertas_raw = evaluar_formulario(filtro_form_al, df_objetivo_filtrado)
+        df_alertas_raw['Formulario'] = filtro_form_al
+
+    # Filtrar por Supervisor si se selecciona uno específico
+    if filtro_sup_al != "Todos":
+        df_alertas_raw = df_alertas_raw[df_alertas_raw['Regional / supervisor'] == filtro_sup_al]
+
+    # Base pendiente: solo No comprobado y Sin respuesta
+    df_pendientes_base = df_alertas_raw[df_alertas_raw['Estado'].isin(['No comprobado', 'Sin respuesta'])].copy()
+
+    # CÁLCULO DE CANTIDADES PARA LAS TARJETAS (según Formulario y Supervisor seleccionado)
+    cant_no_comp = int((df_pendientes_base['Estado'] == 'No comprobado').sum())
+    cant_sin_resp = int((df_pendientes_base['Estado'] == 'Sin respuesta').sum())
+
+    # RENDERIZADO DE LAS 2 TARJETAS
+    card1, card2 = st.columns(2)
+    card1.metric("Cantidad No Comprobados", f"{cant_no_comp:,}")
+    card2.metric("Cantidad de Sin Respuesta", f"{cant_sin_resp:,}")
+
+    # Filtrar por Estado para la tabla
+    df_tabla_final = df_pendientes_base.copy()
+    if filtro_estado_al != "Todos":
+        df_tabla_final = df_tabla_final[df_tabla_final['Estado'] == filtro_estado_al]
 
     cols_orden = ['Formulario', 'Territorial', 'Regional / supervisor', 'Terminal', 'Estado', 'Intentos', 'Evidencia']
-    df_mostrar = df_alertas[[c for c in cols_orden if c in df_alertas.columns]]
+    df_mostrar = df_tabla_final[[c for c in cols_orden if c in df_tabla_final.columns]]
 
     if df_mostrar.empty:
         st.success("🎉 ¡Excelente! No hay pendientes registrados bajo los filtros seleccionados.")
