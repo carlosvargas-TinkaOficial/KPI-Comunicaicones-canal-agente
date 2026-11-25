@@ -92,4 +92,4 @@ if not st.session_state["autenticado"]:
         st.subheader("Portal Comercial - Canal Agente")
         st.write("Por favor, ingresa la clave de autorización para acceder:")
 
-        tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time
+tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time()
