@@ -130,8 +130,8 @@ if os.path.exists("logo.png"):
 modulo_seleccionado = st.sidebar.radio(
     "Selecciona la Herramienta:",
     [
-        "🎯 1. Copiloto IA (Inasistencias)",
-        "📋 2. Resultado Encuesta de Pozo"
+        "📋 1. Resultado Encuesta de Pozo,
+        "🎯 2. Copiloto IA (Inasistencias)"
     ]
 )
 
