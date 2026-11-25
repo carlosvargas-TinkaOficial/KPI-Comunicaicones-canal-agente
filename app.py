@@ -23,8 +23,8 @@ st.markdown("""
     p, label, span, div { color: #000000 !important; }
     h1, h2, h3, h4, h5, h6 { color: #096045 !important; font-weight: 800 !important; }
     label[data-testid="stWidgetLabel"] p { color: #096045 !important; font-weight: bold !important; font-size: 1.05rem !important; }
-    div[data-baseweb="select"] > div { background-color: #FFFFFF !important; border: 2px solid #096045 !important; border-radius: 8px !important; color: #000000 !important; }
-    div[data-baseweb="select"] * { color: #000000 !important; background-color: #FFFFFF !important; }
+    div[data-baseweb="select"] > div, div[data-baseweb="input"] > div { background-color: #FFFFFF !important; border: 2px solid #096045 !important; border-radius: 8px !important; color: #000000 !important; }
+    div[data-baseweb="select"] *, div[data-baseweb="input"] input { color: #000000 !important; background-color: #FFFFFF !important; }
     [data-baseweb="popover"], [data-baseweb="menu"], ul[role="listbox"], li[role="option"] { background-color: #FFFFFF !important; color: #000000 !important; }
     li[role="option"] * { color: #000000 !important; background-color: #FFFFFF !important; }
     li[role="option"]:hover, li[role="option"][aria-selected="true"] { background-color: #F5F0D4 !important; }
@@ -81,7 +81,7 @@ if st.session_state["autenticado"]:
     else:
         st.session_state["ultimo_acceso"] = time.time()
 
-# --- PANTALLA DE CONTROL DE ACCESO CON RATE LIMITING ---
+# --- PANTALLA DE CONTROL DE ACCESO ---
 if not st.session_state["autenticado"]:
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
@@ -92,4 +92,84 @@ if not st.session_state["autenticado"]:
         st.subheader("Portal Comercial - Canal Agente")
         st.write("Por favor, ingresa la clave de autorización para acceder:")
 
-tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time()
+        tiempo_restante = st.session_state["tiempo_bloqueo"] - time.time()
+        if tiempo_restante > 0:
+            mins_restantes = int(tiempo_restante // 60) + 1
+            st.error(f"🚫 Demasiados intentos fallidos. Acceso bloqueado temporalmente por {mins_restantes} minuto(s).")
+            st.stop()
+
+        clave_ingresada = st.text_input("Contraseña de Acceso:", type="password", key="pwd_input")
+        
+        if st.button("🚀 Ingresar al Portal", type="primary"):
+            if hmac.compare_digest(clave_ingresada, PASSWORD_CORRECTA):
+                st.session_state["autenticado"] = True
+                st.session_state["intentos_fallidos"] = 0
+                st.session_state["tiempo_bloqueo"] = 0
+                st.session_state["ultimo_acceso"] = time.time()
+                st.rerun()
+            else:
+                st.session_state["intentos_fallidos"] += 1
+                intentos_restantes = MAX_INTENTOS - st.session_state["intentos_fallidos"]
+                if st.session_state["intentos_fallidos"] >= MAX_INTENTOS:
+                    st.session_state["tiempo_bloqueo"] = time.time() + TIEMPO_BLOQUEO_SEG
+                    st.error("🚫 Excediste el número de intentos permitidos. Pantalla bloqueada por 5 minutos.")
+                    st.rerun()
+                else:
+                    st.error(f"🔑 Contraseña incorrecta. Te quedan {intentos_restantes} intento(s) antes del bloqueo.")
+    st.stop()
+
+# --- AUTENTICACIÓN Y CONFIGURACIÓN DE MÓDULOS ---
+api_key = st.secrets.get("GEMINI_API_KEY", None)
+url_inas = st.secrets.get("URL_INASISTENCIAS", None)
+url_pozos = st.secrets.get("URL_POZOS", None)
+
+st.sidebar.title("📌 Canal Agente")
+if os.path.exists("logo.png"):
+    st.sidebar.image("logo.png", width=180)
+
+modulo_seleccionado = st.sidebar.radio(
+    "Selecciona la Herramienta:",
+    [
+        "🎯 1. Copiloto IA (Inasistencias)",
+        "📋 2. Resultado Encuesta de Pozo"
+    ]
+)
+
+st.sidebar.divider()
+st.sidebar.header("⚙️ Configuración")
+
+if st.sidebar.button("🔄 Recargar Datos de Drive"):
+    st.cache_data.clear()
+    st.success("Caché limpiada. Cargando datos frescos...")
+    time.sleep(1)
+    st.rerun()
+
+if not api_key:
+    api_key = st.sidebar.text_input("Gemini API Key (AQ...)", type="password")
+
+if st.sidebar.button("🔒 Cerrar Sesión"):
+    st.session_state["autenticado"] = False
+    st.rerun()
+
+# --- FUNCIÓN DE CARGA BLINDADA SILENCIOSA ---
+@st.cache_data(ttl=600)
+def cargar_excel_drive(url):
+    if not url:
+        return None
+    try:
+        cache_buster_url = f"{url}&_cb={int(time.time())}" if "?" in url else f"{url}?_cb={int(time.time())}"
+        response = requests.get(cache_buster_url, timeout=(5, 30), allow_redirects=True)
+        response.raise_for_status()
+        return io.BytesIO(response.content)
+    except Exception:
+        return None
+
+# --- ENRUTADOR PRINCIPAL ---
+if "Inasistencias" in modulo_seleccionado:
+    bytes_m1 = cargar_excel_drive(url_inas)
+    inasistencias.mostrar_modulo(api_key, bytes_m1)
+
+elif "Resultado Encuesta de Pozo" in modulo_seleccionado:
+    bytes_pozos = cargar_excel_drive(url_pozos)
+    bytes_inas = cargar_excel_drive(url_inas)
+    pozos.mostrar_modulo(api_key, bytes_pozos, bytes_inas)
