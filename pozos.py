@@ -303,9 +303,12 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
     st.divider()
 
-    # --- 3. NUEVOS GRÁFICOS EJECUTIVOS (EMBUDO IA, VELOCÍMETRO META 85% Y COMPOSICIÓN 100%) ---
+    # --- 3. SECCIÓN: ANÁLISIS DE DESEMPEÑO Y COBERTURA (ENCABEZADO ARRIBA DEL EMBUDO) ---
     df_eval_total = df_filtrado_global[df_filtrado_global['Formulario'] == selected_form] if selected_form != "Todos" else df_filtrado_global
     plotly_config = {'scrollZoom': False, 'displayModeBar': False, 'doubleClick': 'reset'}
+
+    titulo_graficos = f"📊 Análisis de Desempeño y Cobertura ({selected_form})" if selected_form != "Todos" else "📊 Análisis de Desempeño y Cobertura (Consolidado)"
+    st.subheader(titulo_graficos)
 
     if not df_eval_total.empty:
         # Cálculos para Embudo y Medidor
@@ -322,7 +325,7 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
 
         col_top1, col_top2 = st.columns(2)
 
-        # GRÁFICO 1: EMBUDO VALIDACIÓN IA
+        # GRÁFICO 1: EMBUDO VALIDACIÓN IA (SIN FONDO BLANCO)
         with col_top1:
             fig_funnel = go.Figure(go.Funnel(
                 y=["Total Terminales", "Con Respuesta", "KPI Aprobadas", "KPI 1er Intento"],
@@ -342,21 +345,21 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                 connector=dict(visible=False)
             ))
             fig_funnel.update_layout(
-                title=dict(text="Embudo Validación IA", font=dict(size=17, color="#000000"), x=0.02, y=0.95),
-                paper_bgcolor="#FFFFFF",
-                plot_bgcolor="#FFFFFF",
+                title=dict(text="Embudo Validación IA", font=dict(size=17, color="#000000", weight="bold"), x=0.02, y=0.95),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
                 margin=dict(l=140, r=20, t=55, b=20),
                 height=320,
-                yaxis=dict(tickfont=dict(color="#444444", size=13))
+                yaxis=dict(tickfont=dict(color="#333333", size=13))
             )
             st.plotly_chart(fig_funnel, use_container_width=True, config=plotly_config)
 
-        # GRÁFICO 2: AVANCE GLOBAL VS META (MEDIDOR SEMICIRCULAR)
+        # GRÁFICO 2: AVANCE GLOBAL VS META (MEDIDOR SEMICIRCULAR SIN FONDO BLANCO)
         with col_top2:
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=pct_aprob,
-                number={'suffix': " %", 'font': {'size': 46, 'color': '#555555'}},
+                number={'suffix': " %", 'font': {'size': 46, 'color': '#333333'}},
                 gauge={
                     'axis': {
                         'range': [0, 100],
@@ -365,10 +368,10 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                         'ticktext': ['0 %', '85 %', '100 %'],
                         'tickwidth': 1,
                         'tickcolor': "#555555",
-                        'tickfont': {'size': 15, 'color': '#555555'}
+                        'tickfont': {'size': 15, 'color': '#333333'}
                     },
                     'bar': {'color': "#119925", 'thickness': 1},
-                    'bgcolor': "#E6E0D8",
+                    'bgcolor': "#DFD9CE",
                     'borderwidth': 0,
                     'threshold': {
                         'line': {'color': "#033E24", 'width': 3},
@@ -378,86 +381,15 @@ def mostrar_modulo(api_key, bytes_pozos, bytes_inasistencias=None):
                 }
             ))
             fig_gauge.update_layout(
-                title=dict(text="Avance Global vs Meta", font=dict(size=17, color="#000000"), x=0.02, y=0.95),
-                paper_bgcolor="#FFFFFF",
+                title=dict(text="Avance Global vs Meta", font=dict(size=17, color="#000000", weight="bold"), x=0.02, y=0.95),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
                 margin=dict(l=30, r=30, t=65, b=20),
                 height=320
             )
             st.plotly_chart(fig_gauge, use_container_width=True, config=plotly_config)
 
-        # GRÁFICO 3: COMPOSICIÓN ESTADOS POR TERRITORIAL (BARRAS 100% APILADAS)
-        col_bot1, col_bot2 = st.columns([1.15, 0.85])
-        with col_bot1:
-            df_comp = df_eval_total.copy()
-            df_comp['Cat_Estado'] = df_comp['Estado'].apply(
-                lambda x: 'Aprobadas' if 'True' in str(x) else ('No Comprobado' if x == 'No comprobado' else 'Sin Respuesta')
-            )
-            
-            # Agrupar y calcular porcentajes sobre el total de cada territorial
-            grp_terr = df_comp.groupby(['Territorial', 'Cat_Estado']).size().unstack(fill_value=0)
-            for col_req in ['Aprobadas', 'No Comprobado', 'Sin Respuesta']:
-                if col_req not in grp_terr.columns:
-                    grp_terr[col_req] = 0
-            
-            grp_terr['Total'] = grp_terr[['Aprobadas', 'No Comprobado', 'Sin Respuesta']].sum(axis=1)
-            grp_terr = grp_terr.sort_values('Total', ascending=True)
-
-            fig_comp = go.Figure()
-            colores_comp = {
-                'Aprobadas': '#119925',
-                'No Comprobado': '#F7567C',
-                'Sin Respuesta': '#E65C19'
-            }
-
-            for estado_cat in ['Aprobadas', 'No Comprobado', 'Sin Respuesta']:
-                pct_vals = (grp_terr[estado_cat] / grp_terr['Total'] * 100).round(0).astype(int)
-                text_labels = [f"{v}%" if v >= 4 else "" for v in pct_vals]
-                
-                fig_comp.add_trace(go.Bar(
-                    name=estado_cat,
-                    y=grp_terr.index,
-                    x=pct_vals,
-                    orientation='h',
-                    marker=dict(color=colores_comp[estado_cat]),
-                    text=text_labels,
-                    textposition='inside',
-                    insidetextanchor='middle',
-                    textfont=dict(color='white', size=12, family="Arial")
-                ))
-
-            fig_comp.update_layout(
-                title=dict(text="Composición Estados por Territorial", font=dict(size=17, color="#000000"), x=0.02, y=0.96),
-                barmode='stack',
-                paper_bgcolor="#FFFFFF",
-                plot_bgcolor="#FFFFFF",
-                height=340,
-                margin=dict(l=140, r=20, t=75, b=35),
-                xaxis=dict(
-                    range=[0, 100],
-                    tickvals=[0, 50, 100],
-                    ticktext=['0%', '50%', '100%'],
-                    showgrid=True,
-                    gridcolor="#EEEEEE",
-                    tickfont=dict(color="#666666")
-                ),
-                yaxis=dict(tickfont=dict(color="#555555", size=13)),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="center",
-                    x=0.5,
-                    font=dict(size=12, color="#333333")
-                )
-            )
-            st.plotly_chart(fig_comp, use_container_width=True, config=plotly_config)
-
-        st.divider()
-
     # --- 4. ANÁLISIS SEGÚN TERRITORIAL Y ANÁLISIS SEGÚN REGIONAL ---
-    titulo_graficos = f"📊 Análisis de Desempeño y Cobertura ({selected_form})" if selected_form != "Todos" else "📊 Análisis de Desempeño y Cobertura (Consolidado)"
-    st.subheader(titulo_graficos)
-
     modo_metrica = st.radio("Selecciona la métrica a visualizar:", ["Pendientes", "Cumplimiento"], horizontal=True, key="radio_modo_analisis")
     col_g1, col_g2 = st.columns(2)
 
