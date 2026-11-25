@@ -127,11 +127,15 @@ st.sidebar.title("📌 Canal Agente")
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=180)
 
+# SELECTOR MODULAR TÁCTIL (Encuesta de Pozo primero por defecto)
 modulo_seleccionado = st.sidebar.radio(
-"Selecciona la Herramienta:",
+    "Selecciona la Herramienta:",
     [
         "📋 1. Resultado Encuesta de Pozo",
         "🎯 2. Copiloto IA (Inasistencias)"
+    ],
+    index=0
+)
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Configuración")
@@ -163,11 +167,11 @@ def cargar_excel_drive(url):
         return None
 
 # --- ENRUTADOR PRINCIPAL ---
-if "Inasistencias" in modulo_seleccionado:
-    bytes_m1 = cargar_excel_drive(url_inas)
-    inasistencias.mostrar_modulo(api_key, bytes_m1)
-
-elif "Resultado Encuesta de Pozo" in modulo_seleccionado:
+if "Resultado Encuesta de Pozo" in modulo_seleccionado:
     bytes_pozos = cargar_excel_drive(url_pozos)
     bytes_inas = cargar_excel_drive(url_inas)
     pozos.mostrar_modulo(api_key, bytes_pozos, bytes_inas)
+
+elif "Inasistencias" in modulo_seleccionado:
+    bytes_m1 = cargar_excel_drive(url_inas)
+    inasistencias.mostrar_modulo(api_key, bytes_m1)
